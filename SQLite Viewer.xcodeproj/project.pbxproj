@@ -45,6 +45,11 @@
 			path = "SQLite ViewerUITests";
 			sourceTree = "<group>";
 		};
+		54AFFA0E306999E9004FC3B3 /* Specs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Specs;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +84,7 @@
 				54AFF9F430699883004FC3B3 /* SQLite ViewerTests */,
 				54AFF9FE30699883004FC3B3 /* SQLite ViewerUITests */,
 				54AFF9E530699880004FC3B3 /* Products */,
+				54AFFA0E306999E9004FC3B3 /* Specs */,
 			);
 			sourceTree = "<group>";
 		};
@@ -109,6 +115,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				54AFF9E630699880004FC3B3 /* SQLite Viewer */,
+				54AFFA0E306999E9004FC3B3 /* Specs */,
 			);
 			name = "SQLite Viewer";
 			packageProductDependencies = (
