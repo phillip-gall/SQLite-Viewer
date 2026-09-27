@@ -62,6 +62,43 @@ nonisolated struct TableViewDetail: Equatable, Sendable {
     let strict: Bool?
 }
 
+nonisolated struct SchemaIndexEntry: Identifiable, Equatable, Sendable {
+    enum Source: Equatable, Sendable {
+        case column(String)
+        case expression
+        case rowID
+    }
+
+    let sequence: Int64
+    let cid: Int64
+    let source: Source
+    let descending: Bool
+    let collation: String
+    let isKey: Bool
+
+    var id: Int64 { sequence }
+}
+
+nonisolated struct SchemaIndex: Identifiable, Equatable, Sendable {
+    enum Origin: String, Sendable {
+        case created = "c"
+        case uniqueConstraint = "u"
+        case primaryKey = "pk"
+    }
+
+    let name: String
+    let tableName: String
+    let isUnique: Bool
+    let origin: Origin
+    let isPartial: Bool
+    let sql: String?
+    let rootPage: Int64?
+    let entries: [SchemaIndexEntry]
+
+    var id: String { "\(tableName):\(name)" }
+    var keys: [SchemaIndexEntry] { entries.filter(\.isKey) }
+}
+
 /// Reads only the main schema through the connection owned by DatabaseSession.
 struct SchemaService: Sendable {
     let session: DatabaseSession
@@ -145,6 +182,57 @@ struct SchemaService: Sendable {
             )
         }
         throw SchemaError.missingObject(object.name)
+    }
+
+    func loadIndexes(for selected: SchemaObject) async throws -> [SchemaIndex] {
+        guard selected.kind == .table else { throw SchemaError.unsupportedObject(selected.name) }
+        let detail = try await loadTableViewDetail(selected)
+        guard detail.tableKind == .ordinary else { throw SchemaError.unsupportedObject(selected.name) }
+        let catalog = try await loadCatalog()
+        let result = try await session.execute(
+            "PRAGMA main.index_list(\(SQLIdentifier.quote(selected.name)))", rowLimit: Int.max
+        )
+        guard !result.truncated else { throw SchemaError.invalidResult("Index list was truncated.") }
+        let decoder = try SchemaRowDecoder(result)
+        var indexes: [SchemaIndex] = []
+        for row in result.rows {
+            let name = try decoder.text("name", in: row)
+            let originCode = try decoder.text("origin", in: row)
+            guard let origin = SchemaIndex.Origin(rawValue: originCode) else {
+                throw SchemaError.invalidResult("Unknown index origin \(originCode) for \(name).")
+            }
+            let info = try await session.execute(
+                "PRAGMA main.index_xinfo(\(SQLIdentifier.quote(name)))", rowLimit: Int.max
+            )
+            guard !info.truncated else { throw SchemaError.invalidResult("Entries for \(name) were truncated.") }
+            let entryDecoder = try SchemaRowDecoder(info)
+            let entries = try info.rows.map { entry -> SchemaIndexEntry in
+                let cid = try entryDecoder.requiredInteger("cid", in: entry)
+                let source: SchemaIndexEntry.Source
+                switch cid {
+                case -2: source = .expression
+                case -1: source = .rowID
+                default:
+                    guard cid >= 0 else { throw SchemaError.invalidResult("Unknown index cid \(cid) for \(name).") }
+                    source = .column(try entryDecoder.text("name", in: entry))
+                }
+                return SchemaIndexEntry(
+                    sequence: try entryDecoder.requiredInteger("seqno", in: entry), cid: cid,
+                    source: source, descending: try entryDecoder.requiredInteger("desc", in: entry) != 0,
+                    collation: try entryDecoder.text("coll", in: entry),
+                    isKey: try entryDecoder.requiredInteger("key", in: entry) != 0
+                )
+            }
+            let catalogObject = catalog.first { $0.kind == .index && $0.name == name && $0.tableName == selected.name }
+            indexes.append(SchemaIndex(
+                name: name, tableName: selected.name,
+                isUnique: try decoder.requiredInteger("unique", in: row) != 0,
+                origin: origin, isPartial: try decoder.requiredInteger("partial", in: row) != 0,
+                sql: catalogObject?.sql, rootPage: catalogObject?.rootPage,
+                entries: entries.sorted { $0.sequence < $1.sequence }
+            ))
+        }
+        return indexes.sorted { $0.name < $1.name }
     }
 }
 

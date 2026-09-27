@@ -96,4 +96,64 @@ final class SchemaServiceTests: XCTestCase {
         let shadowDetail = try await service.loadTableViewDetail(shadow)
         XCTAssertEqual(shadowDetail.tableKind, .shadow)
     }
+
+    func testIndexDetailsAndAuxiliaryEntries() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        try await fixture.session.execute("CREATE TABLE \"index\"\"table\" (a TEXT, b INTEGER, UNIQUE(a))")
+        try await fixture.session.execute("CREATE INDEX \"quoted\"\"index\" ON \"index\"\"table\" (a COLLATE NOCASE DESC, (b + 1)) WHERE b > 0")
+        let service = SchemaService(session: fixture.session)
+        let catalog = try await service.loadCatalog()
+        let table = try XCTUnwrap(catalog.first { $0.name == "index\"table" })
+        let indexes = try await service.loadIndexes(for: table)
+        XCTAssertEqual(indexes.count, 2)
+        let created = try XCTUnwrap(indexes.first { $0.name == "quoted\"index" })
+        XCTAssertEqual(created.origin, .created)
+        XCTAssertFalse(created.isUnique)
+        XCTAssertTrue(created.isPartial)
+        XCTAssertNotNil(created.sql)
+        XCTAssertNotNil(created.rootPage)
+        XCTAssertEqual(created.keys.count, 2)
+        XCTAssertEqual(created.keys[0].source, .column("a"))
+        XCTAssertTrue(created.keys[0].descending)
+        XCTAssertEqual(created.keys[0].collation, "NOCASE")
+        XCTAssertEqual(created.keys[1].source, .expression)
+        XCTAssertEqual(created.keys[1].cid, -2)
+        XCTAssertTrue(created.entries.contains { !$0.isKey && $0.source == .rowID })
+        let pragma = try await fixture.session.execute("PRAGMA main.index_xinfo(\"quoted\"\"index\")")
+        XCTAssertEqual(pragma.rows.count, created.entries.count)
+        let unique = try XCTUnwrap(indexes.first { $0.origin == .uniqueConstraint })
+        XCTAssertTrue(unique.isUnique)
+        XCTAssertNil(unique.sql)
+        XCTAssertEqual(unique.tableName, table.name)
+        let keys = try XCTUnwrap(catalog.first { $0.name == "keys" })
+        let primary = try await service.loadIndexes(for: keys)
+        XCTAssertEqual(primary.first?.origin, .primaryKey)
+        XCTAssertEqual(primary.first?.keys.count, 2)
+        let sample = try XCTUnwrap(catalog.first { $0.name == "sample" })
+        let sampleIndexes = try await service.loadIndexes(for: sample)
+        XCTAssertEqual(sampleIndexes.count, 1)
+    }
+
+    func testIndexErrorsAndTableWithoutIndexes() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        try await fixture.session.execute("CREATE TABLE plain (value TEXT)")
+        try await fixture.session.execute("CREATE VIEW plain_view AS SELECT value FROM plain")
+        let service = SchemaService(session: fixture.session)
+        let catalog = try await service.loadCatalog()
+        let plain = try XCTUnwrap(catalog.first { $0.name == "plain" })
+        let indexes = try await service.loadIndexes(for: plain)
+        XCTAssertTrue(indexes.isEmpty)
+        let view = try XCTUnwrap(catalog.first { $0.name == "plain_view" })
+        do {
+            _ = try await service.loadIndexes(for: view)
+            XCTFail("Expected unsupported object")
+        } catch SchemaError.unsupportedObject { }
+        try await fixture.session.execute("DROP TABLE plain")
+        do {
+            _ = try await service.loadIndexes(for: plain)
+            XCTFail("Expected missing object")
+        } catch SchemaError.missingObject { }
+    }
 }
