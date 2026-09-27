@@ -35,9 +35,30 @@
 		A10000000000000000000003 /* sqlite3.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sqlite3.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A10000000000000000000006 /* Exceptions for "SQLite Viewer" folder in "SQLite Viewer" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Database/Library/.gitkeep,
+				Database/Services/.gitkeep,
+				Features/Library/.gitkeep,
+				Features/Rows/.gitkeep,
+				Features/Schema/.gitkeep,
+				Features/SQL/.gitkeep,
+				Features/Storage/.gitkeep,
+				Features/Workspace/.gitkeep,
+				Shared/Components/.gitkeep,
+			);
+			target = 54AFF9E330699880004FC3B3 /* SQLite Viewer */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		54AFF9E630699880004FC3B3 /* SQLite Viewer */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A10000000000000000000006 /* Exceptions for "SQLite Viewer" folder in "SQLite Viewer" target */,
+			);
 			path = "SQLite Viewer";
 			sourceTree = "<group>";
 		};
@@ -451,7 +472,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/SQLiteViewer-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/Database/Core/SQLiteViewer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -488,7 +509,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/SQLiteViewer-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/Database/Core/SQLiteViewer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

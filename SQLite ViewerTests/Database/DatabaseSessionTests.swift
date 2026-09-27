@@ -8,7 +8,7 @@
 import XCTest
 @testable import SQLite_Viewer
 
-final class SQLite_ViewerTests: XCTestCase {
+final class DatabaseSessionTests: XCTestCase {
     func testAllValueTypesRoundTrip() async throws {
         let fixture = try await SQLiteFixture.make()
         defer { Task { await fixture.remove() } }
