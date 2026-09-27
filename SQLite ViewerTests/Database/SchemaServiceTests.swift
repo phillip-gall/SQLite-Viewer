@@ -44,4 +44,56 @@ final class SchemaServiceTests: XCTestCase {
         XCTAssertEqual(objects.count, 121)
         XCTAssertEqual(Set(objects.map(\.id)).count, 121)
     }
+
+    func testTableAndViewDetails() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        try await fixture.session.execute("CREATE TABLE \"odd\"\"name\" (a TEXT, b INTEGER, sum INTEGER GENERATED ALWAYS AS (b + 1) VIRTUAL, doubled INTEGER GENERATED ALWAYS AS (b * 2) STORED, PRIMARY KEY (a, b)) WITHOUT ROWID, STRICT")
+        try await fixture.session.execute("CREATE VIEW quoted_view AS SELECT a, sum FROM \"odd\"\"name\"")
+        let service = SchemaService(session: fixture.session)
+        let catalog = try await service.loadCatalog()
+        let table = try XCTUnwrap(catalog.first { $0.name == "odd\"name" })
+        let detail = try await service.loadTableViewDetail(table)
+        XCTAssertEqual(detail.tableKind, .ordinary)
+        XCTAssertEqual(detail.withoutRowID, true)
+        XCTAssertEqual(detail.strict, true)
+        XCTAssertEqual(detail.columns.map(\.name), ["a", "b", "sum", "doubled"])
+        XCTAssertEqual(detail.columns.map(\.primaryKeyPosition), [1, 2, 0, 0])
+        XCTAssertEqual(detail.columns.map(\.visibility), [.normal, .normal, .generatedVirtual, .generatedStored])
+        XCTAssertEqual(detail.columns[0].declaredType, "TEXT")
+        XCTAssertNil(detail.columns[0].defaultSQL)
+        let pragma = try await fixture.session.execute("PRAGMA main.table_xinfo(\"odd\"\"name\")")
+        XCTAssertEqual(pragma.rows.count, detail.columns.count)
+        let view = try XCTUnwrap(catalog.first { $0.name == "quoted_view" })
+        let viewDetail = try await service.loadTableViewDetail(view)
+        XCTAssertNil(viewDetail.tableKind)
+        XCTAssertNil(viewDetail.withoutRowID)
+        XCTAssertEqual(viewDetail.columns.map(\.name), ["a", "sum"])
+        do {
+            _ = try await service.loadTableViewDetail(try XCTUnwrap(catalog.first { $0.kind == .index }))
+            XCTFail("Expected unsupported object")
+        } catch SchemaError.unsupportedObject { }
+        try await fixture.session.execute("DROP VIEW quoted_view")
+        do {
+            _ = try await service.loadTableViewDetail(view)
+            XCTFail("Expected missing object")
+        } catch SchemaError.missingObject { }
+    }
+
+    func testVirtualTableHiddenColumnsWhenSupported() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        guard DatabaseSession.compileOptionUsed("ENABLE_FTS5") else { return }
+        try await fixture.session.execute("CREATE VIRTUAL TABLE search USING fts5(body)")
+        let service = SchemaService(session: fixture.session)
+        let catalog = try await service.loadCatalog()
+        let table = try XCTUnwrap(catalog.first { $0.name == "search" })
+        let detail = try await service.loadTableViewDetail(table)
+        XCTAssertEqual(detail.tableKind, .virtual)
+        XCTAssertTrue(detail.columns.contains { $0.visibility == .virtualTableHidden })
+        XCTAssertTrue(catalog.contains { $0.name == "search_data" })
+        let shadow = try XCTUnwrap(catalog.first { $0.name == "search_data" })
+        let shadowDetail = try await service.loadTableViewDetail(shadow)
+        XCTAssertEqual(shadowDetail.tableKind, .shadow)
+    }
 }

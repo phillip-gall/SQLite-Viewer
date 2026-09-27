@@ -29,6 +29,39 @@ nonisolated struct SchemaObject: Identifiable, Equatable, Sendable {
     var id: String { "\(kind.rawValue):\(name)" }
 }
 
+nonisolated struct SchemaColumn: Identifiable, Equatable, Sendable {
+    enum Visibility: Int64, Sendable {
+        case normal = 0
+        case virtualTableHidden = 1
+        case generatedVirtual = 2
+        case generatedStored = 3
+    }
+
+    let cid: Int64
+    let name: String
+    let declaredType: String
+    let notNull: Bool
+    let defaultSQL: String?
+    let primaryKeyPosition: Int64
+    let visibility: Visibility
+
+    var id: Int64 { cid }
+}
+
+nonisolated struct TableViewDetail: Equatable, Sendable {
+    enum TableKind: String, Sendable {
+        case ordinary = "table"
+        case virtual = "virtual"
+        case shadow = "shadow"
+    }
+
+    let object: SchemaObject
+    let columns: [SchemaColumn]
+    let tableKind: TableKind?
+    let withoutRowID: Bool?
+    let strict: Bool?
+}
+
 /// Reads only the main schema through the connection owned by DatabaseSession.
 struct SchemaService: Sendable {
     let session: DatabaseSession
@@ -63,6 +96,55 @@ struct SchemaService: Sendable {
             }
             if result.rows.count < pageSize { return objects }
         }
+    }
+
+    func loadTableViewDetail(_ selected: SchemaObject) async throws -> TableViewDetail {
+        guard selected.kind == .table || selected.kind == .view else {
+            throw SchemaError.unsupportedObject(selected.name)
+        }
+        guard let object = try await loadCatalog().first(where: { $0.id == selected.id }) else {
+            throw SchemaError.missingObject(selected.name)
+        }
+        let quoted = SQLIdentifier.quote(object.name)
+        let result = try await session.execute("PRAGMA main.table_xinfo(\(quoted))", rowLimit: Int.max)
+        guard !result.truncated else { throw SchemaError.invalidResult("Columns for \(object.name) were truncated.") }
+        let decoder = try SchemaRowDecoder(result)
+        let columns = try result.rows.map { row in
+            let hidden = try decoder.requiredInteger("hidden", in: row)
+            guard let visibility = SchemaColumn.Visibility(rawValue: hidden) else {
+                throw SchemaError.invalidResult("Unknown hidden code \(hidden) for \(object.name).")
+            }
+            return SchemaColumn(
+                cid: try decoder.requiredInteger("cid", in: row),
+                name: try decoder.text("name", in: row),
+                declaredType: try decoder.text("type", in: row),
+                notNull: try decoder.requiredInteger("notnull", in: row) != 0,
+                defaultSQL: try decoder.optionalText("dflt_value", in: row),
+                primaryKeyPosition: try decoder.requiredInteger("pk", in: row),
+                visibility: visibility
+            )
+        }
+        if object.kind == .view {
+            return TableViewDetail(object: object, columns: columns, tableKind: nil,
+                                   withoutRowID: nil, strict: nil)
+        }
+        let tableList = try await session.execute("PRAGMA main.table_list(\(quoted))", rowLimit: Int.max)
+        guard !tableList.truncated else { throw SchemaError.invalidResult("Table properties were truncated.") }
+        let tableDecoder = try SchemaRowDecoder(tableList)
+        for row in tableList.rows {
+            guard try tableDecoder.text("schema", in: row) == "main",
+                  try tableDecoder.text("name", in: row) == object.name else { continue }
+            let type = try tableDecoder.text("type", in: row)
+            guard let kind = TableViewDetail.TableKind(rawValue: type) else {
+                throw SchemaError.invalidResult("Unknown table type \(type) for \(object.name).")
+            }
+            return TableViewDetail(
+                object: object, columns: columns, tableKind: kind,
+                withoutRowID: try tableDecoder.requiredInteger("wr", in: row) != 0,
+                strict: try tableDecoder.requiredInteger("strict", in: row) != 0
+            )
+        }
+        throw SchemaError.missingObject(object.name)
     }
 }
 
