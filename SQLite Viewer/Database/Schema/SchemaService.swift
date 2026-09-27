@@ -103,6 +103,19 @@ nonisolated struct SchemaIndex: Identifiable, Equatable, Sendable {
 struct SchemaService: Sendable {
     let session: DatabaseSession
 
+    func loadShadowTableNames() async throws -> Set<String> {
+        let result = try await session.execute("PRAGMA main.table_list", rowLimit: Int.max)
+        guard !result.truncated else { throw SchemaError.invalidResult("Table list was truncated.") }
+        let decoder = try SchemaRowDecoder(result)
+        var names: Set<String> = []
+        for row in result.rows {
+            guard try decoder.text("schema", in: row) == "main",
+                  try decoder.text("type", in: row) == "shadow" else { continue }
+            names.insert(try decoder.text("name", in: row))
+        }
+        return names
+    }
+
     func loadCatalog() async throws -> [SchemaObject] {
         var objects: [SchemaObject] = []
         let pageSize = 100

@@ -65,8 +65,8 @@ struct ContentView: View {
                 .accessibilityIdentifier("import-button")
             }
             .navigationDestination(for: UUID.self) { id in
-                if let database = model.opened, database.id == id {
-                    WorkspaceStub(database: database)
+                if let database = model.opened, database.id == id, let library = model.library {
+                    DatabaseWorkspace(database: database, library: library)
                 }
             }
             .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.item]) { result in
@@ -102,13 +102,29 @@ struct ContentView: View {
     }
 }
 
-private struct WorkspaceStub: View {
+private struct DatabaseWorkspace: View {
     let database: LibraryDatabase
+    @StateObject private var schemaModel: SchemaWorkspaceModel
+
+    init(database: LibraryDatabase, library: DatabaseLibrary) {
+        self.database = database
+        _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
+    }
 
     var body: some View {
-        ContentUnavailableView("Database open", systemImage: "externaldrive.fill",
-                               description: Text(database.displayName))
-            .navigationTitle(database.displayName)
-            .accessibilityIdentifier("database-workspace")
+        TabView {
+            SchemaWorkspaceView(database: database, model: schemaModel)
+                .tabItem { Label("Schema", systemImage: "square.stack.3d.up") }
+            futureDestination("Rows", symbol: "tablecells")
+                .tabItem { Label("Rows", systemImage: "tablecells") }
+            futureDestination("Storage", symbol: "externaldrive")
+                .tabItem { Label("Storage", systemImage: "externaldrive") }
+            futureDestination("SQL", symbol: "chevron.left.forwardslash.chevron.right")
+                .tabItem { Label("SQL", systemImage: "chevron.left.forwardslash.chevron.right") }
+        }
+    }
+
+    private func futureDestination(_ name: String, symbol: String) -> some View {
+        ContentUnavailableView("\(name) coming soon", systemImage: symbol)
     }
 }

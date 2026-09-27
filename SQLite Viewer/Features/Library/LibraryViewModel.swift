@@ -8,7 +8,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
 
-    private var library: DatabaseLibrary?
+    private(set) var library: DatabaseLibrary?
 
     func load() async {
         do {
@@ -80,6 +80,7 @@ final class LibraryViewModel: ObservableObject {
             let url = directory.appendingPathComponent("\(name).sqlite")
             let session = try DatabaseSession(url: url, createIfNeeded: true)
             try await session.execute("CREATE TABLE sample (value TEXT)")
+            try await session.execute("CREATE INDEX sample_value ON sample(value)")
             try await session.execute("INSERT INTO sample VALUES ('saved')")
             try await session.close()
             await importFile(url)

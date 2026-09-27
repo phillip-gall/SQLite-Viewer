@@ -172,6 +172,11 @@ actor DatabaseLibrary {
         }
     }
 
+    func session(for id: UUID) throws -> DatabaseSession {
+        guard activeID == id, let activeSession else { throw LibraryError.missingEntry }
+        return activeSession
+    }
+
     func delete(_ id: UUID) async throws {
         guard try databases().contains(where: { $0.id == id }) else { throw LibraryError.missingEntry }
         if activeID == id { try await closeActive() }
