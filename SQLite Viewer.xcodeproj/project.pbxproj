@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* sqlite3.c in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* sqlite3.c */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		54AFF9F230699883004FC3B3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,8 @@
 		54AFF9E430699880004FC3B3 /* SQLite Viewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SQLite Viewer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		54AFF9F130699883004FC3B3 /* SQLite ViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "SQLite ViewerTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		54AFF9FB30699883004FC3B3 /* SQLite ViewerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "SQLite ViewerUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000002 /* sqlite3.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = sqlite3.c; sourceTree = "<group>"; };
+		A10000000000000000000003 /* sqlite3.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sqlite3.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -85,6 +91,7 @@
 				54AFF9FE30699883004FC3B3 /* SQLite ViewerUITests */,
 				54AFF9E530699880004FC3B3 /* Products */,
 				54AFFA0E306999E9004FC3B3 /* Specs */,
+				A10000000000000000000004 /* ThirdParty */,
 			);
 			sourceTree = "<group>";
 		};
@@ -96,6 +103,23 @@
 				54AFF9FB30699883004FC3B3 /* SQLite ViewerUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* ThirdParty */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000005 /* SQLite */,
+			);
+			path = ThirdParty;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* SQLite */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000002 /* sqlite3.c */,
+				A10000000000000000000003 /* sqlite3.h */,
+			);
+			path = SQLite;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -115,7 +139,6 @@
 			);
 			fileSystemSynchronizedGroups = (
 				54AFF9E630699880004FC3B3 /* SQLite Viewer */,
-				54AFFA0E306999E9004FC3B3 /* Specs */,
 			);
 			name = "SQLite Viewer";
 			packageProductDependencies = (
@@ -243,6 +266,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000001 /* sqlite3.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -417,12 +441,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"-DSQLITE_ENABLE_DBSTAT_VTAB",
+					"-DSQLITE_OMIT_LOAD_EXTENSION",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.phillipgall.SQLite-Viewer";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/SQLiteViewer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -449,12 +478,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CFLAGS = (
+					"-DSQLITE_ENABLE_DBSTAT_VTAB",
+					"-DSQLITE_OMIT_LOAD_EXTENSION",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.phillipgall.SQLite-Viewer";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "SQLite Viewer/SQLiteViewer-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
