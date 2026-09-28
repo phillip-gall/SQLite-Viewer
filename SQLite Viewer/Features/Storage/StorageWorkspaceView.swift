@@ -130,54 +130,136 @@ struct StorageWorkspaceView: View {
     }
 
     private func distribution(_ report: StorageReport) -> some View {
-        let segments: [(label: String, value: Int64, color: Color)] = [
-            ("Table data", report.data.bytes, .blue),
-            ("Indexes", report.indexes.bytes, .green),
-            ("Other B-trees", report.otherFootprint.bytes, .purple),
-            ("Free pages", report.freeBytes, .orange),
-            ("Overhead", report.overheadBytes, .gray)
-        ]
         return VStack(alignment: .leading, spacing: 10) {
-            GeometryReader { geometry in
-                if report.logicalBytes > 0 {
-                    HStack(spacing: 0) {
-                        ForEach(segments.indices, id: \.self) { index in
-                            let segment = segments[index]
-                            if segment.value > 0 {
-                                segment.color
-                                    .frame(width: geometry.size.width *
-                                           CGFloat(Double(segment.value) / Double(report.logicalBytes)))
-                            }
-                        }
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                } else {
-                    RoundedRectangle(cornerRadius: 8).fill(.quaternary)
-                }
-            }
-            .frame(height: 24)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(segments.map { "\($0.label) \(bytes($0.value))" }.joined(separator: ", "))
-            .accessibilityIdentifier("storage-chart")
-
-            ForEach(segments.indices, id: \.self) { index in
-                let segment = segments[index]
+            if let selected = model.selectedCategory, let breakdown = model.breakdowns[selected] {
                 HStack {
-                    RoundedRectangle(cornerRadius: 2).fill(segment.color)
-                        .frame(width: 12, height: 12)
-                    Text(segment.label)
+                    Text("\(selected.label): \(bytes(breakdown.bytes)) (\(percent(breakdown.bytes, of: report.logicalBytes)) of database)")
+                        .font(.headline)
                     Spacer()
-                    Text(bytes(segment.value))
-                        .monospacedDigit()
-                    Text(percent(segment.value, of: report.logicalBytes))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 54, alignment: .trailing)
+                    Button("Back to overview") { model.showOverview() }
+                        .accessibilityIdentifier("storage-overview")
                 }
-                .font(.subheadline)
+                contributorChart(breakdown)
+                if breakdown.contributors.isEmpty {
+                    Text("No pages in this category")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(breakdown.contributors) { contributor in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(contributor.name).font(.subheadline.bold())
+                                if let description = contributor.description {
+                                    Text(description).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Text(bytes(contributor.bytes)).monospacedDigit()
+                            Text(percent(contributor.bytes, of: breakdown.bytes))
+                                .frame(width: 54, alignment: .trailing)
+                        }
+                        .font(.subheadline)
+                        .accessibilityIdentifier("storage-contributor:\(contributor.name)")
+                    }
+                }
+            } else {
+                overviewChart(report)
+            }
+            ForEach(StorageCategory.allCases, id: \.self) { category in
+                if let breakdown = model.breakdowns[category] {
+                    Button { model.selectCategory(category) } label: {
+                        HStack {
+                            RoundedRectangle(cornerRadius: 2).fill(color(for: category))
+                                .frame(width: 12, height: 12)
+                            Text(category.label)
+                            Spacer()
+                            Text(bytes(breakdown.bytes)).monospacedDigit()
+                            Text(percent(breakdown.bytes, of: report.logicalBytes))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 54, alignment: .trailing)
+                        }
+                        .font(.subheadline)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(category.label), \(bytes(breakdown.bytes)), \(percent(breakdown.bytes, of: report.logicalBytes)) of logical database")
+                    .accessibilityValue(model.selectedCategory == category ? "Selected" : "Not selected")
+                    .accessibilityIdentifier("storage-category:\(category.rawValue)")
+                }
             }
             Text("Free pages: \(report.freePages). Overhead includes pages dbstat does not assign to a B-tree.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func overviewChart(_ report: StorageReport) -> some View {
+        GeometryReader { geometry in
+            if report.logicalBytes > 0 {
+                HStack(spacing: 0) {
+                    ForEach(StorageCategory.allCases, id: \.self) { category in
+                        if let item = model.breakdowns[category], item.bytes > 0 {
+                            color(for: category)
+                                .frame(width: geometry.size.width * CGFloat(item.shareOfLogical))
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    ForEach(StorageCategory.allCases, id: \.self) { category in
+                        if let item = model.breakdowns[category], item.bytes > 0 {
+                            Button { model.selectCategory(category) } label: {
+                                Color.clear.contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: max(44, geometry.size.width * CGFloat(item.shareOfLogical)), height: 44)
+                            .position(x: segmentCenter(category, width: geometry.size.width), y: 12)
+                            .accessibilityLabel("\(category.label), \(bytes(item.bytes)), \(percent(item.bytes, of: report.logicalBytes)) of logical database")
+                            .accessibilityIdentifier("storage-segment:\(category.rawValue)")
+                        }
+                    }
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+            }
+        }
+        .frame(height: 24)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("storage-chart")
+    }
+
+    private func contributorChart(_ breakdown: StorageCategoryBreakdown) -> some View {
+        GeometryReader { geometry in
+            if breakdown.bytes > 0 {
+                HStack(spacing: 0) {
+                    ForEach(Array(breakdown.contributors.enumerated()), id: \.element.id) { index, contributor in
+                        color(for: breakdown.category).opacity(index.isMultiple(of: 2) ? 1 : 0.55)
+                            .frame(width: geometry.size.width * CGFloat(breakdown.share(of: contributor)))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+            }
+        }
+        .frame(height: 24)
+        .accessibilityLabel("\(breakdown.category.label) breakdown, \(bytes(breakdown.bytes))")
+        .accessibilityIdentifier("storage-category-chart")
+    }
+
+    private func segmentCenter(_ category: StorageCategory, width: CGFloat) -> CGFloat {
+        let preceding = StorageCategory.allCases.prefix { $0 != category }
+            .reduce(0.0) { $0 + (model.breakdowns[$1]?.shareOfLogical ?? 0) }
+        let share = model.breakdowns[category]?.shareOfLogical ?? 0
+        return width * CGFloat(preceding + share / 2)
+    }
+
+    private func color(for category: StorageCategory) -> Color {
+        switch category {
+        case .tableData: .blue
+        case .indexes: .green
+        case .other: .purple
+        case .free: .orange
+        case .overhead: .gray
         }
     }
 

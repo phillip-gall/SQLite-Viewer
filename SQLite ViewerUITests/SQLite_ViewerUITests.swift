@@ -255,4 +255,40 @@ final class SQLite_ViewerUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(newIndex.waitForExistence(timeout: 10))
     }
+
+    @MainActor
+    func testStorageCategoryDrilldownsAndOverview() throws {
+        let app = XCUIApplication()
+        let name = "Category Test \(UUID().uuidString.prefix(6))"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        app.tabBars.buttons["Storage"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["storage-chart"].waitForExistence(timeout: 10))
+        let segment = app.buttons["storage-segment:indexes"]
+        XCTAssertTrue(segment.waitForExistence(timeout: 5))
+        segment.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["storage-category-chart"].waitForExistence(timeout: 10))
+        app.buttons["storage-overview"].tap()
+        app.buttons["storage-category:indexes"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["storage-category-chart"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["storage-contributor:sample"].exists)
+        let free = app.buttons["storage-category:free"]
+        free.tap()
+        if free.label.contains("0 B") {
+            XCTAssertTrue(app.staticTexts["No pages in this category"].exists)
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["storage-contributor:Unassigned"].exists)
+        }
+        app.buttons["storage-overview"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["storage-chart"].exists)
+        let overhead = app.buttons["storage-category:overhead"]
+        overhead.tap()
+        if overhead.label.contains("0 B") {
+            XCTAssertTrue(app.staticTexts["No pages in this category"].exists)
+        }
+    }
 }

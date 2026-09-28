@@ -12,6 +12,8 @@ final class StorageWorkspaceModel: ObservableObject {
 
     @Published private(set) var report: StorageReport?
     @Published private(set) var selectedName: String?
+    @Published private(set) var selectedCategory: StorageCategory?
+    @Published private(set) var breakdowns: [StorageCategory: StorageCategoryBreakdown] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published var sort: Sort = .total
@@ -57,11 +59,20 @@ final class StorageWorkspaceModel: ObservableObject {
         selectedName = selectedName == name ? nil : name
     }
 
+    func selectCategory(_ category: StorageCategory) {
+        selectedCategory = category
+    }
+
+    func showOverview() {
+        selectedCategory = nil
+    }
+
     func refresh() {
         revision += 1
         let current = revision
         work?.cancel()
         report = nil
+        breakdowns = [:]
         errorMessage = nil
         isLoading = true
         work = Task { [weak self] in
@@ -69,8 +80,10 @@ final class StorageWorkspaceModel: ObservableObject {
             do {
                 let session = try await library.session(for: databaseID)
                 let loaded = try await StorageService(session: session).load()
+                let categories = try StorageCategoryBreakdown.all(from: loaded)
                 guard current == revision, !Task.isCancelled else { return }
                 report = loaded
+                breakdowns = categories
                 if !loaded.objects.contains(where: { $0.name == self.selectedName }) {
                     selectedName = nil
                 }
