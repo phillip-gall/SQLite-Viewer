@@ -36,7 +36,7 @@ flowchart TD
 
 ## Execution order
 
-Run [01 SQLite core](01-sqlite-core.md), [02 import and library](02-import-library.md), [03 schema browser](03-schema-browser.md), [04 row grid](04-row-grid.md), [05 SQL console](05-sql-console.md), [06 storage analysis](06-storage-analysis.md), then [07 integration and release checks](07-integration.md). Each plan contains its own planning, implementation, testing, review, and commit steps. At the start of each plan, inspect the current code and recent commits; the repository is the source of truth. No separate result or handoff file is required.
+Run [01 SQLite core](01-sqlite-core.md), [02 import and library](02-import-library.md), the four [03 schema browser plans](03-schema-browser.md) in their listed order, [04 row grid](04-row-grid.md), [05 SQL console](05-sql-console.md), [06 storage analysis](06-storage-analysis.md), then [07 integration and release checks](07-integration.md). Each plan contains its own planning, implementation, testing, review, and commit steps. At the start of each plan, inspect the current code and recent commits; the repository is the source of truth. No separate result or handoff file is required.
 
 ## Reference behavior
 
