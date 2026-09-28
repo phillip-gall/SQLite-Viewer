@@ -106,6 +106,7 @@ private struct DatabaseWorkspace: View {
     let database: LibraryDatabase
     @StateObject private var schemaModel: SchemaWorkspaceModel
     @StateObject private var rowsModel: RowsWorkspaceModel
+    @StateObject private var storageModel: StorageWorkspaceModel
     @StateObject private var sqlModel: SQLConsoleModel
     @State private var destination = "schema"
 
@@ -113,6 +114,7 @@ private struct DatabaseWorkspace: View {
         self.database = database
         _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
         _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
+        _storageModel = StateObject(wrappedValue: StorageWorkspaceModel(databaseID: database.id, library: library))
         _sqlModel = StateObject(wrappedValue: SQLConsoleModel(databaseID: database.id, library: library))
     }
 
@@ -125,7 +127,7 @@ private struct DatabaseWorkspace: View {
             RowsWorkspaceView(catalog: schemaModel.catalog, model: rowsModel)
                 .tabItem { Label("Rows", systemImage: "tablecells") }
                 .tag("rows")
-            futureDestination("Storage", symbol: "externaldrive")
+            StorageWorkspaceView(model: storageModel)
                 .tabItem { Label("Storage", systemImage: "externaldrive") }
                 .tag("storage")
             SQLConsoleView(database: database, model: sqlModel)
@@ -153,9 +155,6 @@ private struct DatabaseWorkspace: View {
     private func refreshAfterSQL() {
         rowsModel.invalidateVisiblePage()
         schemaModel.refreshSchema()
-    }
-
-    private func futureDestination(_ name: String, symbol: String) -> some View {
-        ContentUnavailableView("\(name) coming soon", systemImage: symbol)
+        storageModel.refresh()
     }
 }

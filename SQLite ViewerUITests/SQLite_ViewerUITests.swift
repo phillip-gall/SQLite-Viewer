@@ -118,4 +118,48 @@ final class SQLite_ViewerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["sql-statement-1"].exists)
         XCTAssertTrue(app.staticTexts["Stopped"].exists)
     }
+
+    @MainActor
+    func testStorageChartTableDetailsAndSQLRefresh() throws {
+        let app = XCUIApplication()
+        let name = "Storage Test \(UUID().uuidString)"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let database = app.staticTexts[name]
+        XCTAssertTrue(database.waitForExistence(timeout: 10))
+        database.tap()
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Storage")
+        ).firstMatch.tap()
+        let chart = app.descendants(matching: .any)["storage-chart"]
+        XCTAssertTrue(chart.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Table data"].exists)
+        XCTAssertTrue(app.staticTexts["Free pages"].exists)
+        let sample = app.buttons["storage-table:sample"]
+        for _ in 0..<4 {
+            if sample.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(sample.isHittable)
+        sample.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["storage-detail"].waitForExistence(timeout: 10))
+
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "SQL")
+        ).firstMatch.tap()
+        let editor = app.textViews["sql-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        editor.typeText("CREATE INDEX sample_value_extra ON sample(value);")
+        app.buttons["run-sql"].tap()
+        XCTAssertTrue(app.staticTexts["Finished"].waitForExistence(timeout: 10))
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Storage")
+        ).firstMatch.tap()
+        let newIndex = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "sample_value_extra,")
+        ).firstMatch
+        XCTAssertTrue(newIndex.waitForExistence(timeout: 10))
+    }
 }
