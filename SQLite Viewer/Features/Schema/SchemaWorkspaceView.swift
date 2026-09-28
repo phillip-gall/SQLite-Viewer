@@ -3,6 +3,8 @@ import SwiftUI
 struct SchemaWorkspaceView: View {
     let database: LibraryDatabase
     @ObservedObject var model: SchemaWorkspaceModel
+    let onRefresh: () -> Void
+    let onBrowseRows: (SchemaObject) -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -11,7 +13,7 @@ struct SchemaWorkspaceView: View {
                     catalogList(wide: true)
                         .frame(width: 320)
                     Divider()
-                    detailPane
+                    detailPane(wide: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
@@ -19,19 +21,19 @@ struct SchemaWorkspaceView: View {
             }
         }
         .accessibilityIdentifier("database-workspace")
-        .task { model.refreshSchema() }
+        .task { onRefresh() }
     }
 
     private func catalogList(wide: Bool) -> some View {
         List {
                 Section {
-                    Button("Refresh schema", systemImage: "arrow.clockwise") { model.refreshSchema() }
+                    Button("Refresh schema", systemImage: "arrow.clockwise") { onRefresh() }
                         .accessibilityIdentifier("refresh-schema")
                 }
                 if let error = model.errorMessage {
                     Section {
                         Text(error).foregroundStyle(.red)
-                        Button("Retry") { model.refreshSchema() }
+                        Button("Retry") { onRefresh() }
                     }
                 }
                 if model.catalog.isEmpty && !model.isLoading && model.errorMessage == nil {
@@ -49,7 +51,7 @@ struct SchemaWorkspaceView: View {
                                     .buttonStyle(.plain)
                                 } else {
                                     NavigationLink {
-                                        detailPane.onAppear { model.select(id: object.id) }
+                                        detailPane(wide: false).onAppear { model.select(id: object.id) }
                                     } label: {
                                         objectLabel(object)
                                     }
@@ -79,12 +81,12 @@ struct SchemaWorkspaceView: View {
         .accessibilityIdentifier("schema-\(object.id)")
     }
 
-    private var detailPane: some View {
+    private func detailPane(wide: Bool) -> some View {
         Group {
                 if let error = model.errorMessage {
                     errorView(error)
                 } else if let object = model.selected {
-                    detail(for: object)
+                    detail(for: object, wide: wide)
                 } else {
                     ContentUnavailableView("Select a schema object", systemImage: "square.stack.3d.up")
                 }
@@ -93,7 +95,7 @@ struct SchemaWorkspaceView: View {
     }
 
     @ViewBuilder
-    private func detail(for object: SchemaObject) -> some View {
+    private func detail(for object: SchemaObject, wide: Bool) -> some View {
         if model.isLoading {
             ProgressView("Loading \(object.name)")
         } else {
@@ -106,6 +108,12 @@ struct SchemaWorkspaceView: View {
                     }
                     if object.isInternal { Text("SQLite internal object") }
                     if model.shadowNames.contains(object.name) { Text("Shadow table") }
+                }
+                if object.kind == .table {
+                    Section {
+                        BrowseRowsButton(object: object, dismissDetail: !wide,
+                                         action: onBrowseRows)
+                    }
                 }
                 if let table = model.tableDetail {
                     if let kind = table.tableKind {
@@ -208,9 +216,24 @@ struct SchemaWorkspaceView: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Retry") { model.refreshSchema() }
+            Button("Retry") { onRefresh() }
         }
         .accessibilityIdentifier("schema-error")
+    }
+}
+
+private struct BrowseRowsButton: View {
+    let object: SchemaObject
+    let dismissDetail: Bool
+    let action: (SchemaObject) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Button("Browse rows", systemImage: "tablecells") {
+            if dismissDetail { dismiss() }
+            action(object)
+        }
+        .accessibilityIdentifier("browse-rows")
     }
 }
 

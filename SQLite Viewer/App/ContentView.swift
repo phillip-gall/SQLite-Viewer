@@ -105,23 +105,44 @@ struct ContentView: View {
 private struct DatabaseWorkspace: View {
     let database: LibraryDatabase
     @StateObject private var schemaModel: SchemaWorkspaceModel
+    @StateObject private var rowsModel: RowsWorkspaceModel
+    @State private var destination = "schema"
 
     init(database: LibraryDatabase, library: DatabaseLibrary) {
         self.database = database
         _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
+        _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
     }
 
     var body: some View {
-        TabView {
-            SchemaWorkspaceView(database: database, model: schemaModel)
+        TabView(selection: $destination) {
+            SchemaWorkspaceView(database: database, model: schemaModel,
+                                onRefresh: refreshSchema, onBrowseRows: browseRows)
                 .tabItem { Label("Schema", systemImage: "square.stack.3d.up") }
-            futureDestination("Rows", symbol: "tablecells")
+                .tag("schema")
+            RowsWorkspaceView(catalog: schemaModel.catalog, model: rowsModel)
                 .tabItem { Label("Rows", systemImage: "tablecells") }
+                .tag("rows")
             futureDestination("Storage", symbol: "externaldrive")
                 .tabItem { Label("Storage", systemImage: "externaldrive") }
+                .tag("storage")
             futureDestination("SQL", symbol: "chevron.left.forwardslash.chevron.right")
                 .tabItem { Label("SQL", systemImage: "chevron.left.forwardslash.chevron.right") }
+                .tag("sql")
         }
+        .onChange(of: schemaModel.refreshVersion) { _, _ in
+            rowsModel.invalidateAndReload(availableObjects: schemaModel.catalog)
+        }
+    }
+
+    private func refreshSchema() {
+        rowsModel.invalidateVisiblePage()
+        schemaModel.refreshSchema()
+    }
+
+    private func browseRows(_ object: SchemaObject) {
+        rowsModel.select(object)
+        destination = "rows"
     }
 
     private func futureDestination(_ name: String, symbol: String) -> some View {

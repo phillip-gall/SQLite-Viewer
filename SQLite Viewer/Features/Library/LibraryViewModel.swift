@@ -82,6 +82,13 @@ final class LibraryViewModel: ObservableObject {
             try await session.execute("CREATE TABLE sample (value TEXT)")
             try await session.execute("CREATE INDEX sample_value ON sample(value)")
             try await session.execute("INSERT INTO sample VALUES ('saved')")
+            try await session.execute("CREATE TABLE wide_rows (value TEXT, second TEXT, third TEXT, fourth TEXT, fifth TEXT, distant TEXT)")
+            try await session.execute(
+                """
+                WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 205)
+                INSERT INTO wide_rows(value, distant) SELECT printf('row %03d', n), 'far' FROM seq
+                """
+            )
             try await session.close()
             await importFile(url)
             try FileManager.default.removeItem(at: directory)

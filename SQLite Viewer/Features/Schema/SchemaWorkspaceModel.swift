@@ -11,6 +11,7 @@ final class SchemaWorkspaceModel: ObservableObject {
     @Published private(set) var selectedIndex: SchemaIndex?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var refreshVersion = 0
 
     let databaseID: UUID
     private let library: DatabaseLibrary
@@ -56,6 +57,7 @@ final class SchemaWorkspaceModel: ObservableObject {
                 catalog = objects
                 shadowNames = shadows
                 selected = selected.flatMap { previous in objects.first { $0.id == previous.id } }
+                refreshVersion += 1
                 if let selected {
                     await loadDetails(for: selected, revision: current, service: service)
                 } else {
@@ -69,6 +71,7 @@ final class SchemaWorkspaceModel: ObservableObject {
                 clearDetails()
                 errorMessage = error.localizedDescription
                 isLoading = false
+                refreshVersion += 1
             }
         }
     }
