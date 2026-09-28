@@ -204,4 +204,75 @@ final class DatabaseLibraryTests: XCTestCase {
         let afterDeletion = try await library.databases()
         XCTAssertTrue(afterDeletion.isEmpty)
     }
+
+    func testRenamePreservesCopyAndManifestWhileOpen() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await fixture.session.close()
+        let library = try DatabaseLibrary(rootURL: root)
+        let source = fixture.directory.appendingPathComponent("fixture.sqlite")
+        let first = try await library.importDatabase(from: source)
+        let second = try await library.importDatabase(from: source)
+        let copiedURL = root.appendingPathComponent(first.id.uuidString).appendingPathComponent("database.sqlite")
+        let before = try Data(contentsOf: copiedURL)
+        _ = try await library.open(first.id)
+
+        let renamed = try await library.rename(first.id, to: "  Shared name  ")
+        _ = try await library.rename(second.id, to: "Shared name")
+        XCTAssertEqual(renamed.displayName, "Shared name")
+        XCTAssertEqual(renamed.originalFilename, first.originalFilename)
+        XCTAssertEqual(renamed.importedAt, first.importedAt)
+        XCTAssertEqual(try Data(contentsOf: copiedURL), before)
+        let active = try await library.session(for: first.id)
+        let activeRows = try await active.execute("SELECT count(*) FROM sample")
+        XCTAssertEqual(activeRows.rows, [[.integer(0)]])
+        try await library.closeActive()
+
+        let rebuilt = try DatabaseLibrary(rootURL: root)
+        let entries = try await rebuilt.databases()
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertTrue(entries.allSatisfy { $0.displayName == "Shared name" })
+        XCTAssertEqual(entries.first(where: { $0.id == first.id })?.originalFilename, first.originalFilename)
+        XCTAssertEqual(entries.first(where: { $0.id == first.id })?.importedAt, first.importedAt)
+    }
+
+    func testRenameRejectsInvalidNamesAndDamagedManifestWithoutChangingFiles() async throws {
+        let fixture = try await SQLiteFixture.make()
+        defer { Task { await fixture.remove() } }
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await fixture.session.close()
+        let library = try DatabaseLibrary(rootURL: root)
+        let entry = try await library.importDatabase(from: fixture.directory.appendingPathComponent("fixture.sqlite"))
+        let directory = root.appendingPathComponent(entry.id.uuidString)
+        let manifestURL = directory.appendingPathComponent("manifest.json")
+        let originalManifest = try Data(contentsOf: manifestURL)
+        for name in [" \n ", String(repeating: "x", count: 101)] {
+            do {
+                try await library.rename(entry.id, to: name)
+                XCTFail("Expected invalid name")
+            } catch let error as LibraryError {
+                guard case .invalidName = error else { return XCTFail("Unexpected error: \(error)") }
+            }
+            XCTAssertEqual(try Data(contentsOf: manifestURL), originalManifest)
+        }
+        try FileManager.default.removeItem(at: manifestURL)
+        do {
+            try await library.rename(entry.id, to: "Another name")
+            XCTFail("Expected missing manifest error")
+        } catch let error as LibraryError {
+            guard case .damagedManifest = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: manifestURL.path))
+        try Data("invalid json".utf8).write(to: manifestURL)
+        do {
+            try await library.rename(entry.id, to: "Another name")
+            XCTFail("Expected damaged manifest error")
+        } catch let error as LibraryError {
+            guard case .damagedManifest = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertEqual(try Data(contentsOf: manifestURL), Data("invalid json".utf8))
+    }
 }

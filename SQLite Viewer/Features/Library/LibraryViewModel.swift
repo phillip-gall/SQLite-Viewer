@@ -7,6 +7,7 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var opened: LibraryDatabase?
     @Published private(set) var isBusy = false
     @Published var errorMessage: String?
+    @Published var renameErrorMessage: String?
 
     private(set) var library: DatabaseLibrary?
 
@@ -49,8 +50,27 @@ final class LibraryViewModel: ObservableObject {
         do {
             try await library?.closeActive()
             opened = nil
+            databases = try await library?.databases() ?? []
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func rename(_ id: UUID, to name: String) async -> Bool {
+        guard let library else { return false }
+        renameErrorMessage = nil
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let renamed = try await library.rename(id, to: name)
+            if let index = databases.firstIndex(where: { $0.id == id }) {
+                databases[index] = renamed
+            }
+            if opened?.id == id { opened = renamed }
+            return true
+        } catch {
+            renameErrorMessage = error.localizedDescription
+            return false
         }
     }
 

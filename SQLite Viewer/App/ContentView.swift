@@ -5,6 +5,8 @@ struct ContentView: View {
     @StateObject private var model = LibraryViewModel()
     @State private var isImporterPresented = false
     @State private var pendingDelete: LibraryDatabase?
+    @State private var pendingRename: LibraryDatabase?
+    @State private var renameDraft = ""
     @State private var path: [UUID] = []
 
     var body: some View {
@@ -16,33 +18,47 @@ struct ContentView: View {
                                                description: Text("Import a SQLite file to create an editable copy."))
                     }
                     ForEach(model.databases) { database in
-                        HStack {
-                            Button {
-                                Task {
-                                    if await model.open(database.id) { path.append(database.id) }
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(database.displayName).font(.headline)
-                                    Text(database.importedAt, style: .date)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    if let problem = database.problem {
-                                        Text(problem).font(.caption).foregroundStyle(.red)
-                                    }
-                                    Text("Open").font(.caption).foregroundStyle(.tint)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            Task {
+                                if await model.open(database.id) { path.append(database.id) }
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("open-\(database.id.uuidString)")
-                            Button(role: .destructive) { pendingDelete = database } label: {
-                                Image(systemName: "trash")
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(database.displayName).font(.headline)
+                                Text(database.importedAt, style: .date)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if let problem = database.problem {
+                                    Text(problem).font(.caption).foregroundStyle(.red)
+                                }
+                                Text("Open").font(.caption).foregroundStyle(.tint)
                             }
-                            .buttonStyle(.borderless)
-                            .accessibilityLabel("Delete \(database.displayName)")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .disabled(model.isBusy)
+                        .accessibilityLabel("Open \(database.displayName)")
+                        .accessibilityIdentifier("open-\(database.id.uuidString)")
+                        .accessibilityAction(named: "Rename") { beginRename(database) }
+                        .accessibilityAction(named: "Delete") { pendingDelete = database }
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { beginRename(database) }
+                            Button(role: .destructive) { pendingDelete = database } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button("Rename", systemImage: "pencil") { beginRename(database) }
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                pendingDelete = database
+                            }
+                        }
+                        .listRowInsets(EdgeInsets())
                     }
                 } footer: {
                     Text("Import makes an independent snapshot. The source and its WAL sidecars must be accessible for uncheckpointed transactions to appear.")
@@ -87,6 +103,35 @@ struct ContentView: View {
             } message: {
                 Text("The original file will not be changed.")
             }
+            .sheet(item: $pendingRename) { database in
+                NavigationStack {
+                    Form {
+                        TextField("Database name", text: $renameDraft)
+                            .accessibilityIdentifier("rename-name")
+                        if let error = model.renameErrorMessage {
+                            Text(error).foregroundStyle(.red)
+                                .accessibilityIdentifier("rename-error")
+                        }
+                    }
+                    .navigationTitle("Rename database")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { pendingRename = nil }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                Task {
+                                    if await model.rename(database.id, to: renameDraft) {
+                                        pendingRename = nil
+                                    }
+                                }
+                            }
+                            .disabled(model.isBusy)
+                            .accessibilityIdentifier("save-rename")
+                        }
+                    }
+                }
+            }
             .alert("Database error", isPresented: Binding(
                 get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } }
             )) {
@@ -99,6 +144,12 @@ struct ContentView: View {
         .onChange(of: path) { _, newPath in
             if newPath.isEmpty { Task { await model.close() } }
         }
+    }
+
+    private func beginRename(_ database: LibraryDatabase) {
+        model.renameErrorMessage = nil
+        renameDraft = database.displayName
+        pendingRename = database
     }
 }
 
@@ -134,6 +185,7 @@ private struct DatabaseWorkspace: View {
                 .tabItem { Label("SQL", systemImage: "chevron.left.forwardslash.chevron.right") }
                 .tag("sql")
         }
+        .navigationTitle(database.displayName)
         .onChange(of: schemaModel.refreshVersion) { _, _ in
             rowsModel.invalidateAndReload(availableObjects: schemaModel.catalog)
         }

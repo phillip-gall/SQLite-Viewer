@@ -38,6 +38,37 @@ final class SQLite_ViewerUITests: XCTestCase {
     }
 
     @MainActor
+    func testLibraryRowBackgroundOpensAndRenamePersists() throws {
+        let app = XCUIApplication()
+        let name = "Rename Test \(UUID().uuidString.prefix(6))"
+        let renamed = "Renamed database"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.collectionViews["database-workspace"].waitForExistence(timeout: 10))
+        app.buttons["Databases"].tap()
+
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.press(forDuration: 1)
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
+        app.buttons["Rename"].tap()
+        let editor = app.textFields["rename-name"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        editor.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: name.count) + renamed)
+        app.buttons["save-rename"].tap()
+        let newRow = app.buttons["Open \(renamed)"]
+        XCTAssertTrue(newRow.waitForExistence(timeout: 10))
+        newRow.tap()
+        XCTAssertTrue(app.collectionViews["database-workspace"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["SQL"].tap()
+        XCTAssertTrue(app.staticTexts["Imported copy: \(renamed)"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testBrowseLaterPageAndOffscreenColumn() throws {
         let app = XCUIApplication()
         let name = "Grid Test \(UUID().uuidString)"

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 nonisolated struct LibraryDatabase: Identifiable, Sendable, Equatable {
@@ -16,6 +17,8 @@ nonisolated enum LibraryError: LocalizedError, Sendable {
     case corrupt(String)
     case missingDatabase
     case missingEntry
+    case damagedManifest
+    case invalidName(String)
     case storage(String)
 
     var errorDescription: String? {
@@ -26,6 +29,8 @@ nonisolated enum LibraryError: LocalizedError, Sendable {
         case .corrupt(let detail): "The database failed its integrity check. \(detail)"
         case .missingDatabase: "The imported database file is missing. Delete this entry and import it again."
         case .missingEntry: "This database is no longer in the library."
+        case .damagedManifest: "The library manifest is missing or damaged. Delete this entry and import it again."
+        case .invalidName(let detail): detail
         case .storage(let detail): "Could not update the protected database library. \(detail)"
         }
     }
@@ -176,6 +181,41 @@ actor DatabaseLibrary {
     func session(for id: UUID) throws -> DatabaseSession {
         guard activeID == id, let activeSession else { throw LibraryError.missingEntry }
         return activeSession
+    }
+
+    @discardableResult
+    func rename(_ id: UUID, to proposedName: String) throws -> LibraryDatabase {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw LibraryError.invalidName("Enter a database name.") }
+        guard name.count <= 100 else { throw LibraryError.invalidName("Use 100 characters or fewer.") }
+        guard let entry = try databases().first(where: { $0.id == id }) else {
+            throw LibraryError.missingEntry
+        }
+        let directory = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        let manifestURL = directory.appendingPathComponent("manifest.json")
+        let values = try? manifestURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values?.isRegularFile == true, values?.isSymbolicLink != true,
+              let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else {
+            throw LibraryError.damagedManifest
+        }
+
+        let replacement = Manifest(displayName: name, originalFilename: manifest.originalFilename,
+                                   importedAt: manifest.importedAt)
+        let temporaryURL = directory.appendingPathComponent(".manifest-\(UUID().uuidString)")
+        defer { try? files.removeItem(at: temporaryURL) }
+        do {
+            try JSONEncoder().encode(replacement).write(to: temporaryURL, options: .atomic)
+            try Self.protectFile(temporaryURL)
+            guard Darwin.rename(temporaryURL.path, manifestURL.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            throw LibraryError.storage(error.localizedDescription)
+        }
+        return LibraryDatabase(id: entry.id, displayName: name,
+                               originalFilename: manifest.originalFilename, importedAt: manifest.importedAt,
+                               fileSize: entry.fileSize, problem: entry.problem)
     }
 
     func delete(_ id: UUID) async throws {
