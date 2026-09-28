@@ -3,6 +3,7 @@ import SwiftUI
 struct SchemaWorkspaceView: View {
     let database: LibraryDatabase
     @ObservedObject var model: SchemaWorkspaceModel
+    @ObservedObject var counts: TableCountStore
     let onRefresh: () -> Void
     let onBrowseRows: (SchemaObject) -> Void
 
@@ -49,12 +50,16 @@ struct SchemaWorkspaceView: View {
                                         objectLabel(object)
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityLabel(objectAccessibilityLabel(object))
+                                    .accessibilityIdentifier("schema-\(object.id)")
                                 } else {
                                     NavigationLink {
                                         detailPane(wide: false).onAppear { model.select(id: object.id) }
                                     } label: {
                                         objectLabel(object)
                                     }
+                                    .accessibilityLabel(objectAccessibilityLabel(object))
+                                    .accessibilityIdentifier("schema-\(object.id)")
                                 }
                             }
                         }
@@ -76,9 +81,12 @@ struct SchemaWorkspaceView: View {
                 Text(model.shadowNames.contains(object.name) ? "Shadow table" : "SQLite internal")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            if object.kind == .table { countLabel(object) }
+            if object.kind == .view {
+                Text("View").font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .accessibilityLabel("\(object.kind.rawValue) \(object.name)\(object.isInternal ? ", SQLite internal" : "")")
-        .accessibilityIdentifier("schema-\(object.id)")
+        .task(id: model.refreshVersion) { counts.request(object) }
     }
 
     private func detailPane(wide: Bool) -> some View {
@@ -103,6 +111,10 @@ struct SchemaWorkspaceView: View {
                 Section("Object") {
                     LabeledContent("Name", value: object.name)
                     LabeledContent("Type", value: object.kind.rawValue.capitalized)
+                    if object.kind == .table {
+                        LabeledContent("Rows") { countLabel(object) }
+                            .task(id: model.refreshVersion) { counts.request(object, priority: true) }
+                    }
                     if object.kind == .index || object.kind == .trigger {
                         LabeledContent("On", value: object.tableName)
                     }
@@ -176,6 +188,31 @@ struct SchemaWorkspaceView: View {
                 Section("Stored SQL") { sqlText(object.sql) }
             }
         }
+    }
+
+    @ViewBuilder
+    private func countLabel(_ object: SchemaObject) -> some View {
+        switch counts.state(for: object) {
+        case .value(let count):
+            Text("\(count) rows").font(.caption).foregroundStyle(.secondary)
+        case .failed(let message):
+            Text("Count unavailable: \(message)").font(.caption).foregroundStyle(.red)
+        case .counting, nil:
+            Text("Counting…").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func countAccessibility(_ object: SchemaObject) -> String {
+        guard object.kind == .table else { return "" }
+        switch counts.state(for: object) {
+        case .value(let count): return ", \(count) rows"
+        case .failed: return ", row count unavailable"
+        case .counting, nil: return ", counting rows"
+        }
+    }
+
+    private func objectAccessibilityLabel(_ object: SchemaObject) -> String {
+        "\(object.kind.rawValue) \(object.name)\(object.isInternal ? ", SQLite internal" : "")\(countAccessibility(object))"
     }
 
     private func indexSummary(_ index: SchemaIndex) -> some View {

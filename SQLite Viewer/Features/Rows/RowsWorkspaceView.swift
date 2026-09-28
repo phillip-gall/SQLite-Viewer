@@ -3,6 +3,7 @@ import SwiftUI
 struct RowsWorkspaceView: View {
     let catalog: [SchemaObject]
     @ObservedObject var model: RowsWorkspaceModel
+    @ObservedObject var counts: TableCountStore
 
     private var browsable: [SchemaObject] {
         catalog.filter { $0.kind == .table || $0.kind == .view }
@@ -25,11 +26,32 @@ struct RowsWorkspaceView: View {
                 .disabled(browsable.isEmpty)
                 Spacer()
                 if model.selected != nil {
-                    Button("Reload", systemImage: "arrow.clockwise") { model.reload() }
+                    Button("Reload", systemImage: "arrow.clockwise") {
+                        counts.invalidate()
+                        model.reload()
+                    }
                         .accessibilityIdentifier("reload-rows")
                 }
             }
             .padding(.horizontal)
+
+            if let selected = model.selected {
+                if selected.kind == .view {
+                    Text("View").font(.subheadline).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                } else {
+                    Group {
+                        switch counts.state(for: selected) {
+                        case .value(let total): Text("\(total) rows")
+                        case .failed(let message): Text("Count unavailable: \(message)")
+                        case .counting, nil: Text("Counting…")
+                        }
+                    }
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                    .accessibilityIdentifier("rows-total-count")
+                }
+            }
 
             if let page = model.page {
                 if !page.hasStableOrder {
@@ -76,6 +98,11 @@ struct RowsWorkspaceView: View {
             }
         }
         .navigationTitle("Rows")
+        .onChange(of: model.page?.object.id) { _, _ in
+            if let selected = model.selected, model.page != nil {
+                counts.request(selected, priority: true)
+            }
+        }
     }
 }
 

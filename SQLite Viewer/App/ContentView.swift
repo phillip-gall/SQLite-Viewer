@@ -159,6 +159,7 @@ private struct DatabaseWorkspace: View {
     @StateObject private var rowsModel: RowsWorkspaceModel
     @StateObject private var storageModel: StorageWorkspaceModel
     @StateObject private var sqlModel: SQLConsoleModel
+    @StateObject private var countStore: TableCountStore
     @State private var destination = "schema"
 
     init(database: LibraryDatabase, library: DatabaseLibrary) {
@@ -167,15 +168,16 @@ private struct DatabaseWorkspace: View {
         _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
         _storageModel = StateObject(wrappedValue: StorageWorkspaceModel(databaseID: database.id, library: library))
         _sqlModel = StateObject(wrappedValue: SQLConsoleModel(databaseID: database.id, library: library))
+        _countStore = StateObject(wrappedValue: TableCountStore(databaseID: database.id, library: library))
     }
 
     var body: some View {
         TabView(selection: $destination) {
-            SchemaWorkspaceView(database: database, model: schemaModel,
+            SchemaWorkspaceView(database: database, model: schemaModel, counts: countStore,
                                 onRefresh: refreshSchema, onBrowseRows: browseRows)
                 .tabItem { Label("Schema", systemImage: "square.stack.3d.up") }
                 .tag("schema")
-            RowsWorkspaceView(catalog: schemaModel.catalog, model: rowsModel)
+            RowsWorkspaceView(catalog: schemaModel.catalog, model: rowsModel, counts: countStore)
                 .tabItem { Label("Rows", systemImage: "tablecells") }
                 .tag("rows")
             StorageWorkspaceView(model: storageModel)
@@ -195,6 +197,7 @@ private struct DatabaseWorkspace: View {
     }
 
     private func refreshSchema() {
+        countStore.invalidate()
         rowsModel.invalidateVisiblePage()
         schemaModel.refreshSchema()
     }
@@ -205,6 +208,7 @@ private struct DatabaseWorkspace: View {
     }
 
     private func refreshAfterSQL() {
+        countStore.invalidate()
         rowsModel.invalidateVisiblePage()
         schemaModel.refreshSchema()
         storageModel.refresh()

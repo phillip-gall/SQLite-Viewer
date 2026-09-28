@@ -69,6 +69,28 @@ final class SQLite_ViewerUITests: XCTestCase {
     }
 
     @MainActor
+    func testSchemaAndRowsShowExactTableCount() throws {
+        let app = XCUIApplication()
+        let name = "Count Test \(UUID().uuidString.prefix(6))"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let table = app.buttons["schema-table:sample"]
+        XCTAssertTrue(table.waitForExistence(timeout: 10))
+        let count = NSPredicate(format: "label CONTAINS %@", "1 rows")
+        expectation(for: count, evaluatedWith: table)
+        waitForExpectations(timeout: 10)
+        table.tap()
+        app.buttons["browse-rows"].tap()
+        let rowsCount = app.staticTexts["rows-total-count"]
+        XCTAssertTrue(rowsCount.waitForExistence(timeout: 10))
+        XCTAssertEqual(rowsCount.label, "1 rows")
+    }
+
+    @MainActor
     func testBrowseLaterPageAndOffscreenColumn() throws {
         let app = XCUIApplication()
         let name = "Grid Test \(UUID().uuidString)"
