@@ -13,6 +13,10 @@ struct ContentView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
+                    if model.isImporting {
+                        ProgressView("Importing database…")
+                            .accessibilityIdentifier("import-progress")
+                    }
                     if model.databases.isEmpty {
                         ContentUnavailableView("No databases", systemImage: "externaldrive",
                                                description: Text("Import a SQLite file to create an editable copy."))
@@ -142,6 +146,11 @@ struct ContentView: View {
             }
         }
         .task { await model.load() }
+        .onOpenURL { url in
+            Task {
+                if await model.importSharedFile(url) { path.removeAll() }
+            }
+        }
         .onChange(of: path) { _, newPath in
             if newPath.isEmpty { Task { await model.close() } }
         }

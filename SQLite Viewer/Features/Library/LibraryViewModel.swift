@@ -6,31 +6,59 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var databases: [LibraryDatabase] = []
     @Published private(set) var opened: LibraryDatabase?
     @Published private(set) var isBusy = false
+    @Published private(set) var isImporting = false
     @Published var errorMessage: String?
     @Published var renameErrorMessage: String?
 
     private(set) var library: DatabaseLibrary?
+    private var sharedImportGate = SharedFileImportGate()
+    private var activeImportCount = 0
+
+    init(library: DatabaseLibrary? = nil) {
+        self.library = library
+    }
 
     func load() async {
         do {
             if library == nil { library = try DatabaseLibrary() }
-            databases = try await library?.databases() ?? []
+            let entries = try await library?.databases() ?? []
+            if !isImporting { databases = entries }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func importFile(_ url: URL) async {
-        if library == nil { await load() }
-        guard let library else { return }
+    @discardableResult
+    func importFile(_ url: URL) async -> Bool {
+        activeImportCount += 1
+        isImporting = true
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            activeImportCount -= 1
+            isImporting = activeImportCount > 0
+            isBusy = activeImportCount > 0
+        }
+        if library == nil { await load() }
+        guard let library else { return false }
         do {
             _ = try await library.importDatabase(from: url)
             databases = try await library.databases()
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    func importSharedFile(_ url: URL) async -> Bool {
+        guard url.isFileURL else {
+            errorMessage = "Only local files can be imported."
+            return false
+        }
+        guard sharedImportGate.begin(url) else { return false }
+        let imported = await importFile(url)
+        sharedImportGate.finish(url, succeeded: imported)
+        return imported
     }
 
     func open(_ id: UUID) async -> Bool {
