@@ -41,7 +41,8 @@ struct RowsService: Sendable {
     static let pageSize = 100
     let session: DatabaseSession
 
-    func loadPage(for object: SchemaObject, number: Int = 1, sort: RowSort? = nil) async throws -> RowPage {
+    func loadPage(for object: SchemaObject, number: Int = 1, sort: RowSort? = nil,
+                  filters: [RowFilter] = []) async throws -> RowPage {
         guard object.kind == .table || object.kind == .view else {
             throw RowsError.unsupportedObject(object.name)
         }
@@ -54,6 +55,7 @@ struct RowsService: Sendable {
         if let sort, !columns.contains(where: { $0.name == sort.column }) {
             throw RowsError.invalidSort(sort.column)
         }
+        let predicate = try RowPredicate.compile(filters, columns: detail.columns)
 
         let stableKeys = try await stableKeys(for: detail)
         var order: [String] = []
@@ -65,10 +67,10 @@ struct RowsService: Sendable {
         }
         let projection = columns.map { SQLIdentifier.quote($0.name) }.joined(separator: ", ")
         let orderSQL = order.isEmpty ? "" : " ORDER BY " + order.joined(separator: ", ")
-        let sql = "SELECT \(projection) FROM main.\(SQLIdentifier.quote(object.name))\(orderSQL) LIMIT ? OFFSET ?"
+        let sql = "SELECT \(projection) FROM main.\(SQLIdentifier.quote(object.name))\(predicate.sql)\(orderSQL) LIMIT ? OFFSET ?"
         let offset = Int64(number - 1) * Int64(Self.pageSize)
         let result = try await session.execute(
-            sql, bindings: [.integer(Int64(Self.pageSize + 1)), .integer(offset)],
+            sql, bindings: predicate.bindings + [.integer(Int64(Self.pageSize + 1)), .integer(offset)],
             rowLimit: Self.pageSize + 1
         )
         guard !result.truncated, result.columns.count == columns.count else {

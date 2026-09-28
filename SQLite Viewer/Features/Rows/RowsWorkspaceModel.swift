@@ -9,6 +9,10 @@ final class RowsWorkspaceModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var pageNumber = 1
     @Published private(set) var sort: RowSort?
+    @Published private(set) var filters: [RowFilter] = []
+    @Published private(set) var matchingCount: Int64?
+    @Published private(set) var matchingCountError: String?
+    @Published private(set) var removedFilterMessage: String?
 
     let databaseID: UUID
     private let library: DatabaseLibrary
@@ -19,6 +23,7 @@ final class RowsWorkspaceModel: ObservableObject {
     private struct Location {
         var page: Int = 1
         var sort: RowSort?
+        var filters: [RowFilter] = []
     }
 
     init(databaseID: UUID, library: DatabaseLibrary) {
@@ -33,13 +38,15 @@ final class RowsWorkspaceModel: ObservableObject {
         let location = locations[object.id] ?? Location()
         pageNumber = location.page
         sort = location.sort
+        filters = location.filters
+        removedFilterMessage = nil
         load()
     }
 
     func showPage(_ number: Int) {
         guard let selected, number > 0 else { return }
         pageNumber = number
-        locations[selected.id] = Location(page: number, sort: sort)
+        locations[selected.id] = Location(page: number, sort: sort, filters: filters)
         load()
     }
 
@@ -51,7 +58,7 @@ final class RowsWorkspaceModel: ObservableObject {
             sort = RowSort(column: column, descending: false)
         }
         pageNumber = 1
-        locations[selected.id] = Location(page: 1, sort: sort)
+        locations[selected.id] = Location(page: 1, sort: sort, filters: filters)
         load()
     }
 
@@ -59,7 +66,16 @@ final class RowsWorkspaceModel: ObservableObject {
         guard let selected else { return }
         sort = nil
         pageNumber = 1
-        locations[selected.id] = Location()
+        locations[selected.id] = Location(page: 1, sort: nil, filters: filters)
+        load()
+    }
+
+    func applyFilters(_ updated: [RowFilter]) {
+        guard let selected else { return }
+        filters = updated
+        pageNumber = 1
+        removedFilterMessage = nil
+        locations[selected.id] = Location(page: 1, sort: sort, filters: updated)
         load()
     }
 
@@ -69,6 +85,8 @@ final class RowsWorkspaceModel: ObservableObject {
         revision += 1
         work?.cancel()
         page = nil
+        matchingCount = nil
+        matchingCountError = nil
         errorMessage = nil
         isLoading = selected != nil
     }
@@ -86,6 +104,8 @@ final class RowsWorkspaceModel: ObservableObject {
             revision += 1
             work?.cancel()
             page = nil
+            matchingCount = nil
+            matchingCountError = nil
             errorMessage = nil
             isLoading = false
         } else {
@@ -98,6 +118,10 @@ final class RowsWorkspaceModel: ObservableObject {
         work?.cancel()
         selected = nil
         page = nil
+        filters = []
+        matchingCount = nil
+        matchingCountError = nil
+        removedFilterMessage = nil
         locations = [:]
         errorMessage = nil
         isLoading = false
@@ -108,6 +132,8 @@ final class RowsWorkspaceModel: ObservableObject {
         let current = revision
         work?.cancel()
         page = nil
+        matchingCount = nil
+        matchingCountError = nil
         errorMessage = nil
         isLoading = true
         guard let selected else { isLoading = false; return }
@@ -117,12 +143,35 @@ final class RowsWorkspaceModel: ObservableObject {
             guard let self else { return }
             do {
                 let session = try await library.session(for: databaseID)
+                let detail = try await SchemaService(session: session).loadTableViewDetail(selected)
+                guard current == revision, !Task.isCancelled else { return }
+                let names = Set(detail.columns.map(\.name))
+                let validFilters = filters.filter { names.contains($0.column) }
+                let removed = filters.filter { !names.contains($0.column) }
+                if !removed.isEmpty {
+                    filters = validFilters
+                    locations[selected.id] = Location(page: number, sort: sort, filters: validFilters)
+                    removedFilterMessage = "Removed filters for missing columns: " +
+                        removed.map(\.column).joined(separator: ", ")
+                }
                 let loaded = try await RowsService(session: session).loadPage(
-                    for: selected, number: number, sort: sort
+                    for: selected, number: number, sort: sort, filters: validFilters
                 )
                 guard current == revision, !Task.isCancelled else { return }
                 page = loaded
                 isLoading = false
+                if !validFilters.isEmpty {
+                    do {
+                        let count = try await TableCountService(session: session).countMatching(
+                            selected, filters: validFilters
+                        )
+                        guard current == revision, !Task.isCancelled else { return }
+                        matchingCount = count
+                    } catch {
+                        guard current == revision, !Task.isCancelled else { return }
+                        matchingCountError = error.localizedDescription
+                    }
+                }
             } catch {
                 guard current == revision, !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription

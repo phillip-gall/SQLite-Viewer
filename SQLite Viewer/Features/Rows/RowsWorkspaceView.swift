@@ -4,6 +4,12 @@ struct RowsWorkspaceView: View {
     let catalog: [SchemaObject]
     @ObservedObject var model: RowsWorkspaceModel
     @ObservedObject var counts: TableCountStore
+    @State private var filterEditor: FilterEditorSelection?
+
+    private struct FilterEditorSelection: Identifiable {
+        let id = UUID()
+        let filter: RowFilter?
+    }
 
     private var browsable: [SchemaObject] {
         catalog.filter { $0.kind == .table || $0.kind == .view }
@@ -35,11 +41,56 @@ struct RowsWorkspaceView: View {
             }
             .padding(.horizontal)
 
+            if let page = model.page {
+                HStack {
+                    Text("Filters").font(.headline)
+                    Spacer()
+                    Button("Add filter", systemImage: "plus") {
+                        filterEditor = FilterEditorSelection(filter: nil)
+                    }
+                    .accessibilityIdentifier("add-filter")
+                    if !model.filters.isEmpty {
+                        Button("Clear all") { model.applyFilters([]) }
+                            .accessibilityIdentifier("clear-filters")
+                    }
+                }
+                .padding(.horizontal)
+                if !model.filters.isEmpty {
+                    Text("All conditions must match")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                    ForEach(model.filters) { filter in
+                        HStack {
+                            Text(filterDescription(filter))
+                                .lineLimit(2)
+                                .accessibilityIdentifier("filter-\(filter.id.uuidString)")
+                            Spacer(minLength: 8)
+                            Button("Edit") { filterEditor = FilterEditorSelection(filter: filter) }
+                            Button("Remove") {
+                                model.applyFilters(model.filters.filter { $0.id != filter.id })
+                            }
+                        }
+                        .font(.subheadline)
+                        .padding(.horizontal)
+                    }
+                }
+                if let message = model.removedFilterMessage {
+                    Text(message).font(.caption).foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                }
+                if !model.filters.isEmpty {
+                    matchingSummary(for: page.object)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                        .accessibilityIdentifier("rows-matching-count")
+                }
+            }
+
             if let selected = model.selected {
                 if selected.kind == .view {
-                    Text("View").font(.subheadline).foregroundStyle(.secondary)
+                    Text(model.filters.isEmpty ? "View" : "Filtered view")
+                        .font(.subheadline).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                } else {
+                } else if model.filters.isEmpty {
                     Group {
                         switch counts.state(for: selected) {
                         case .value(let total): Text("\(total) rows")
@@ -98,11 +149,58 @@ struct RowsWorkspaceView: View {
             }
         }
         .navigationTitle("Rows")
+        .sheet(item: $filterEditor) { selection in
+            if let page = model.page {
+                RowFilterEditor(columns: page.columns, editing: selection.filter) { filter in
+                    var updated = model.filters
+                    if let index = updated.firstIndex(where: { $0.id == filter.id }) {
+                        updated[index] = filter
+                    } else {
+                        updated.append(filter)
+                    }
+                    model.applyFilters(updated)
+                }
+            }
+        }
         .onChange(of: model.page?.object.id) { _, _ in
             if let selected = model.selected, model.page != nil {
                 counts.request(selected, priority: true)
             }
         }
+    }
+
+    @ViewBuilder
+    private func matchingSummary(for object: SchemaObject) -> some View {
+        if let error = model.matchingCountError {
+            Text("Matching count unavailable: \(error)").foregroundStyle(.red)
+        } else if let matching = model.matchingCount {
+            if object.kind == .table {
+                switch counts.state(for: object) {
+                case .value(let total): Text("Matching \(matching) of \(total) rows")
+                case .failed: Text("Matching \(matching) rows; total unavailable")
+                case .counting, nil: Text("Matching \(matching) rows; counting total…")
+                }
+            } else {
+                Text("Matching \(matching) rows")
+            }
+        } else {
+            Text("Counting matches…")
+        }
+    }
+
+    private func filterDescription(_ filter: RowFilter) -> String {
+        guard let value = filter.value, filter.operation.needsValue else {
+            return "\(filter.column) \(filter.operation.label)"
+        }
+        let display: String
+        switch value {
+        case .text(let text): display = "\"\(text)\""
+        case .integer(let number): display = String(number)
+        case .real(let number): display = String(number)
+        case .null: display = "NULL"
+        case .blob(let data): display = "\(data.count) bytes"
+        }
+        return "\(filter.column) \(filter.operation.label) \(display)"
     }
 }
 

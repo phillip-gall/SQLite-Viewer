@@ -102,6 +102,8 @@ final class LibraryViewModel: ObservableObject {
             try await session.execute("CREATE TABLE sample (value TEXT)")
             try await session.execute("CREATE INDEX sample_value ON sample(value)")
             try await session.execute("INSERT INTO sample VALUES ('saved')")
+            try await session.execute("CREATE TABLE earnings (customer_id INTEGER, income INTEGER)")
+            try await session.execute("INSERT INTO earnings VALUES (10, 500), (10, 1500), (20, 2000)")
             try await session.execute("CREATE TABLE wide_rows (value TEXT, second TEXT, third TEXT, fourth TEXT, fifth TEXT, distant TEXT)")
             try await session.execute(
                 """

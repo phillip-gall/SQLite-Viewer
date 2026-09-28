@@ -91,6 +91,46 @@ final class SQLite_ViewerUITests: XCTestCase {
     }
 
     @MainActor
+    func testRowsCombineCustomerAndIncomeFilters() throws {
+        let app = XCUIApplication()
+        let name = "Filter Test \(UUID().uuidString.prefix(6))"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        app.tabBars.buttons["Rows"].tap()
+        app.buttons["rows-object-picker"].tap()
+        app.buttons["earnings"].tap()
+        XCTAssertTrue(app.buttons["add-filter"].waitForExistence(timeout: 10))
+
+        app.buttons["add-filter"].tap()
+        let value = app.textFields["filter-value"]
+        XCTAssertTrue(value.waitForExistence(timeout: 5))
+        value.tap()
+        value.typeText("10")
+        app.buttons["apply-filter"].tap()
+        XCTAssertTrue(app.buttons["add-filter"].waitForExistence(timeout: 10))
+
+        app.buttons["add-filter"].tap()
+        app.buttons["filter-column"].tap()
+        app.buttons["income"].tap()
+        app.buttons["filter-operation"].tap()
+        app.buttons[">"].tap()
+        let secondValue = app.textFields["filter-value"]
+        secondValue.tap()
+        secondValue.typeText("1000")
+        app.buttons["apply-filter"].tap()
+        let matching = app.staticTexts["rows-matching-count"]
+        XCTAssertTrue(matching.waitForExistence(timeout: 10))
+        let expected = NSPredicate(format: "label CONTAINS %@", "Matching 1 of 3 rows")
+        expectation(for: expected, evaluatedWith: matching)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.staticTexts["Page 1"].exists)
+    }
+
+    @MainActor
     func testBrowseLaterPageAndOffscreenColumn() throws {
         let app = XCUIApplication()
         let name = "Grid Test \(UUID().uuidString)"

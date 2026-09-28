@@ -47,6 +47,52 @@ final class RowsWorkspaceTests: XCTestCase {
         try await library.closeActive()
     }
 
+    func testFiltersRestorePerTableAndRecoverFromDroppedColumn() async throws {
+        let fixture = try await SQLiteFixture.make()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            Task { await fixture.remove() }
+            try? FileManager.default.removeItem(at: root)
+        }
+        try await fixture.session.execute("INSERT INTO sample(id, number, optional) VALUES (1, 500, 'x'), (2, 1500, 'y'), (3, 2000, 'z')")
+        try await fixture.session.close()
+        let library = try DatabaseLibrary(rootURL: root)
+        let entry = try await library.importDatabase(from: fixture.directory.appendingPathComponent("fixture.sqlite"))
+        _ = try await library.open(entry.id)
+        let session = try await library.session(for: entry.id)
+        let catalog = try await SchemaService(session: session).loadCatalog()
+        let sample = try XCTUnwrap(catalog.first { $0.name == "sample" })
+        let keys = try XCTUnwrap(catalog.first { $0.name == "keys" })
+        let model = RowsWorkspaceModel(databaseID: entry.id, library: library)
+        model.select(sample)
+        try await waitUntil { model.page != nil }
+        let income = RowFilter(column: "number", operation: .greater, value: .integer(1000))
+        let optional = RowFilter(column: "optional", operation: .isNotNull)
+        model.applyFilters([income, optional])
+        try await waitUntil { model.matchingCount == 2 }
+        XCTAssertEqual(model.pageNumber, 1)
+        XCTAssertEqual(model.page?.rows.count, 2)
+        model.select(keys)
+        try await waitUntil { model.page?.object.id == keys.id }
+        model.select(sample)
+        try await waitUntil { model.matchingCount == 2 }
+        XCTAssertEqual(model.filters, [income, optional])
+
+        try await session.execute("ALTER TABLE sample DROP COLUMN optional")
+        let updated = try await SchemaService(session: session).loadCatalog()
+        model.invalidateVisiblePage()
+        model.invalidateAndReload(availableObjects: updated)
+        try await waitUntil { model.matchingCount == 2 }
+        XCTAssertEqual(model.filters, [income])
+        XCTAssertTrue(model.removedFilterMessage?.contains("optional") == true)
+        try await session.execute("DELETE FROM sample WHERE id = 2")
+        model.invalidateVisiblePage()
+        model.invalidateAndReload(availableObjects: updated)
+        try await waitUntil { model.matchingCount == 1 }
+        XCTAssertEqual(model.page?.rows.count, 1)
+        try await library.closeActive()
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws {
         for _ in 0..<100 {
             if condition() { return }

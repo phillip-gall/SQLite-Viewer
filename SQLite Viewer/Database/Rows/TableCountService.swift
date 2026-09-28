@@ -23,6 +23,19 @@ struct TableCountService: Sendable {
         return try Self.decode(result, table: object.name)
     }
 
+    func countMatching(_ object: SchemaObject, filters: [RowFilter]) async throws -> Int64 {
+        guard object.kind == .table || object.kind == .view else {
+            throw TableCountError.unsupportedObject(object.name)
+        }
+        let detail = try await SchemaService(session: session).loadTableViewDetail(object)
+        let predicate = try RowPredicate.compile(filters, columns: detail.columns)
+        let result = try await session.execute(
+            "SELECT COUNT(*) FROM main.\(SQLIdentifier.quote(object.name))\(predicate.sql)",
+            bindings: predicate.bindings, rowLimit: 1
+        )
+        return try Self.decode(result, table: object.name)
+    }
+
     static func decode(_ result: SQLiteResult, table name: String) throws -> Int64 {
         guard result.rowCount == 1, result.rows.count == 1,
               result.rows[0].count == 1,
