@@ -113,7 +113,7 @@ actor DatabaseLibrary {
             try Self.protectDirectory(staging)
             defer { try? files.removeItem(at: staging) }
             try Self.checkSQLiteHeader(at: source)
-            try Self.copySnapshot(from: source, to: destination)
+            try Self.copySnapshot(from: source, to: destination, in: staging)
             try Self.protectContents(of: staging)
 
             let manifest = Manifest(displayName: source.deletingPathExtension().lastPathComponent,
@@ -203,7 +203,57 @@ actor DatabaseLibrary {
         }
     }
 
-    private static func copySnapshot(from source: URL, to destination: URL) throws {
+    private struct SnapshotTransferError: Error {
+        let code: Int32
+        let message: String
+
+        var needsWritableSourceDirectory: Bool {
+            let primaryCode = code & 0xFF
+            return primaryCode == SQLITE_CANTOPEN || primaryCode == SQLITE_READONLY
+        }
+    }
+
+    private static func copySnapshot(from source: URL, to destination: URL, in staging: URL) throws {
+        do {
+            try backup(from: source, to: destination)
+        } catch let error as SnapshotTransferError where error.needsWritableSourceDirectory {
+            // A picked file may be readable while SQLite cannot create its WAL index beside it.
+            try removeSnapshotFiles(at: destination)
+            let localSource = staging.appendingPathComponent("source.sqlite")
+            defer {
+                try? FileManager.default.removeItem(at: localSource)
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: localSource.path + "-wal"))
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: localSource.path + "-shm"))
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: localSource.path + "-journal"))
+            }
+            do {
+                try FileManager.default.copyItem(at: source, to: localSource)
+                let sourceWAL = URL(fileURLWithPath: source.path + "-wal")
+                if FileManager.default.fileExists(atPath: sourceWAL.path) {
+                    try FileManager.default.copyItem(at: sourceWAL,
+                                                     to: URL(fileURLWithPath: localSource.path + "-wal"))
+                }
+            } catch {
+                throw LibraryError.sourceOpen("Could not stage the selected file and its WAL: \(error.localizedDescription)")
+            }
+            do {
+                try backup(from: localSource, to: destination)
+            } catch let stagedError as SnapshotTransferError {
+                throw LibraryError.backup(stagedError.message)
+            }
+        } catch let error as SnapshotTransferError {
+            throw LibraryError.backup(error.message)
+        }
+    }
+
+    private static func removeSnapshotFiles(at destination: URL) throws {
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            let url = URL(fileURLWithPath: destination.path + suffix)
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    private static func backup(from source: URL, to destination: URL) throws {
         var input: OpaquePointer?
         let inputStatus = sqlite3_open_v2(source.path, &input, SQLITE_OPEN_READONLY, nil)
         guard inputStatus == SQLITE_OK, let input else {
@@ -225,12 +275,14 @@ actor DatabaseLibrary {
         defer { sqlite3_close(output) }
         sqlite3_busy_timeout(output, 5_000)
         guard let backup = sqlite3_backup_init(output, "main", input, "main") else {
-            throw LibraryError.backup(String(cString: sqlite3_errmsg(output)))
+            throw SnapshotTransferError(code: sqlite3_extended_errcode(output),
+                                        message: String(cString: sqlite3_errmsg(output)))
         }
         let step = sqlite3_backup_step(backup, -1)
         let finish = sqlite3_backup_finish(backup)
         guard step == SQLITE_DONE, finish == SQLITE_OK else {
-            throw LibraryError.backup(String(cString: sqlite3_errmsg(output)))
+            throw SnapshotTransferError(code: step == SQLITE_DONE ? finish : step,
+                                        message: String(cString: sqlite3_errmsg(output)))
         }
 
         var statement: OpaquePointer?

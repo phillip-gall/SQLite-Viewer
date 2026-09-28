@@ -115,6 +115,63 @@ final class DatabaseLibraryTests: XCTestCase {
         try await copied.close()
     }
 
+    func testImportWALDatabaseFromReadOnlyDirectoryWithoutSidecars() async throws {
+        let fixture = try await SQLiteFixture.make()
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = fixture.directory.appendingPathComponent("fixture.sqlite")
+        _ = try await fixture.session.execute("PRAGMA journal_mode=WAL")
+        try await fixture.session.execute("INSERT INTO sample(label) VALUES ('checkpointed')")
+        try await fixture.session.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try await fixture.session.close()
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: source.path + suffix)
+            if FileManager.default.fileExists(atPath: sidecar.path) {
+                try FileManager.default.removeItem(at: sidecar)
+            }
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: fixture.directory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.directory.path)
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+
+        let library = try DatabaseLibrary(rootURL: root)
+        let entry = try await library.importDatabase(from: source)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(entry.id.uuidString).appendingPathComponent("source.sqlite").path
+        ))
+        let copiedURL = root.appendingPathComponent(entry.id.uuidString).appendingPathComponent("database.sqlite")
+        let copied = try DatabaseSession(url: copiedURL)
+        let rows = try await copied.execute("SELECT label FROM sample")
+        XCTAssertEqual(rows.rows, [[.text("checkpointed")]])
+        try await copied.close()
+    }
+
+    func testReadOnlyDirectoryFallbackIncludesAccessibleWAL() async throws {
+        let fixture = try await SQLiteFixture.make()
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = fixture.directory.appendingPathComponent("fixture.sqlite")
+        _ = try await fixture.session.execute("PRAGMA journal_mode=WAL")
+        try await fixture.session.execute("INSERT INTO sample(label) VALUES ('still in WAL')")
+        let sharedMemory = URL(fileURLWithPath: source.path + "-shm")
+        try FileManager.default.removeItem(at: sharedMemory)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: fixture.directory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.directory.path)
+            Task { await fixture.remove() }
+        }
+
+        let library = try DatabaseLibrary(rootURL: root)
+        let entry = try await library.importDatabase(from: source)
+        let copiedURL = root.appendingPathComponent(entry.id.uuidString).appendingPathComponent("database.sqlite")
+        let copied = try DatabaseSession(url: copiedURL)
+        let rows = try await copied.execute("SELECT label FROM sample")
+        XCTAssertEqual(rows.rows, [[.text("still in WAL")]])
+        try await copied.close()
+    }
+
     func testProtectionBackupExclusionAndReconciliation() async throws {
         let fixture = try await SQLiteFixture.make()
         defer { Task { await fixture.remove() } }
