@@ -61,7 +61,7 @@ struct ContentView: View {
                         .listRowInsets(EdgeInsets())
                     }
                 } footer: {
-                    Text("Import makes an independent snapshot. The source and its WAL sidecars must be accessible for uncheckpointed transactions to appear.")
+                    Text("Import .sqlite, .sqlite3, or .db files. Import makes an independent snapshot. The source and its WAL sidecars must be accessible for uncheckpointed transactions to appear.")
                 }
             }
             .navigationTitle("Databases")
@@ -85,7 +85,8 @@ struct ContentView: View {
                     DatabaseWorkspace(database: database, library: library)
                 }
             }
-            .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.item]) { result in
+            .fileImporter(isPresented: $isImporterPresented,
+                          allowedContentTypes: SQLiteDocumentTypes.contentTypes) { result in
                 switch result {
                 case .success(let url): Task { await model.importFile(url) }
                 case .failure(let error): model.errorMessage = error.localizedDescription
