@@ -164,6 +164,7 @@ actor DatabaseLibrary {
 
     func closeActive() async throws {
         let closedID = activeID
+        activeSession?.cancelActiveSQL()
         try await activeSession?.close()
         activeSession = nil
         activeID = nil

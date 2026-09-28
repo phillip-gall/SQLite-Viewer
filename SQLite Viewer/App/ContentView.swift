@@ -106,12 +106,14 @@ private struct DatabaseWorkspace: View {
     let database: LibraryDatabase
     @StateObject private var schemaModel: SchemaWorkspaceModel
     @StateObject private var rowsModel: RowsWorkspaceModel
+    @StateObject private var sqlModel: SQLConsoleModel
     @State private var destination = "schema"
 
     init(database: LibraryDatabase, library: DatabaseLibrary) {
         self.database = database
         _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
         _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
+        _sqlModel = StateObject(wrappedValue: SQLConsoleModel(databaseID: database.id, library: library))
     }
 
     var body: some View {
@@ -126,12 +128,15 @@ private struct DatabaseWorkspace: View {
             futureDestination("Storage", symbol: "externaldrive")
                 .tabItem { Label("Storage", systemImage: "externaldrive") }
                 .tag("storage")
-            futureDestination("SQL", symbol: "chevron.left.forwardslash.chevron.right")
+            SQLConsoleView(database: database, model: sqlModel)
                 .tabItem { Label("SQL", systemImage: "chevron.left.forwardslash.chevron.right") }
                 .tag("sql")
         }
         .onChange(of: schemaModel.refreshVersion) { _, _ in
             rowsModel.invalidateAndReload(availableObjects: schemaModel.catalog)
+        }
+        .onChange(of: sqlModel.completedVersion) { _, _ in
+            refreshAfterSQL()
         }
     }
 
@@ -143,6 +148,11 @@ private struct DatabaseWorkspace: View {
     private func browseRows(_ object: SchemaObject) {
         rowsModel.select(object)
         destination = "rows"
+    }
+
+    private func refreshAfterSQL() {
+        rowsModel.invalidateVisiblePage()
+        schemaModel.refreshSchema()
     }
 
     private func futureDestination(_ name: String, symbol: String) -> some View {

@@ -3,6 +3,7 @@ import Foundation
 /// The only owner of a SQLite connection and its prepared statements.
 actor DatabaseSession {
     private var connection: OpaquePointer?
+    private let progress = SQLProgressContext()
 
     init(url: URL, createIfNeeded: Bool = false) throws {
         guard url.isFileURL else {
@@ -19,6 +20,11 @@ actor DatabaseSession {
             throw error
         }
         sqlite3_extended_result_codes(opened, 1)
+        sqlite3_progress_handler(opened, 1_000, { context in
+            guard let context else { return 0 }
+            let progress = Unmanaged<SQLProgressContext>.fromOpaque(context).takeUnretainedValue()
+            return progress.shouldInterrupt ? 1 : 0
+        }, Unmanaged.passUnretained(progress).toOpaque())
         connection = opened
     }
 
@@ -30,9 +36,14 @@ actor DatabaseSession {
         guard let connection else { return }
         let status = sqlite3_close(connection)
         guard status == SQLITE_OK else {
+            progress.clearClosing()
             throw Self.makeError(connection, sql: "", fallbackCode: status)
         }
         self.connection = nil
+    }
+
+    nonisolated func cancelActiveSQL() {
+        progress.cancelActive()
     }
 
     /// Runs one prepared statement. Every row is stepped, but at most `rowLimit` rows are retained.
@@ -106,8 +117,161 @@ actor DatabaseSession {
                             affectedRows: isReadOnly ? 0 : sqlite3_total_changes64(connection) - changesBefore)
     }
 
+    /// Runs the submitted text statement by statement without adding a transaction.
+    func executeScript(_ script: String, cancellation: SQLCancellationToken) throws -> SQLScriptResult {
+        guard let connection else {
+            throw SQLiteError(code: SQLITE_MISUSE, extendedCode: SQLITE_MISUSE,
+                              message: "The database is closed.", sql: script)
+        }
+        let source = Array(script.utf8)
+        if source.contains(0) {
+            return SQLScriptResult(blocks: [], failure: SQLStatementFailure(
+                number: 1, code: SQLITE_MISUSE, extendedCode: SQLITE_MISUSE,
+                message: "SQL text contains an embedded NUL byte.", line: nil, column: nil
+            ))
+        }
+        progress.setActive(cancellation)
+        defer { progress.setActive(nil) }
+        var terminated = source.map { CChar(bitPattern: $0) }
+        terminated.append(0)
+
+        return terminated.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else {
+                return SQLScriptResult(blocks: [], failure: Self.simpleFailure(
+                    number: 1, code: SQLITE_MISUSE, message: "Enter a SQL statement."
+                ))
+            }
+            var offset = 0
+            var statementNumber = 0
+            var blocks: [SQLStatementBlock] = []
+            while offset < source.count {
+                if cancellation.isCancelled {
+                    return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                        number: statementNumber + 1, code: SQLITE_INTERRUPT, message: "Query cancelled."
+                    ))
+                }
+                let startOffset = offset
+                let start = ProcessInfo.processInfo.systemUptime
+                let cursor = base.advanced(by: offset)
+                var prepared: OpaquePointer?
+                var tail: UnsafePointer<CChar>?
+                let status = sqlite3_prepare_v3(connection, cursor, -1, 0, &prepared, &tail)
+                guard status == SQLITE_OK else {
+                    let failure = Self.scriptFailure(connection, source: source, startOffset: startOffset,
+                                                     number: statementNumber + 1, status: status)
+                    if let prepared { sqlite3_finalize(prepared) }
+                    return SQLScriptResult(blocks: blocks, failure: failure)
+                }
+                guard let tail else {
+                    if let prepared { sqlite3_finalize(prepared) }
+                    return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                        number: statementNumber + 1, code: SQLITE_MISUSE,
+                        message: "SQLite did not return the remaining SQL text."
+                    ))
+                }
+                let used = cursor.distance(to: tail)
+                guard used > 0 else {
+                    if let prepared { sqlite3_finalize(prepared) }
+                    return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                        number: statementNumber + 1, code: SQLITE_MISUSE,
+                        message: "SQLite could not advance through the SQL text."
+                    ))
+                }
+                offset += used
+                guard let prepared else { continue }
+                defer { sqlite3_finalize(prepared) }
+                statementNumber += 1
+                if sqlite3_bind_parameter_count(prepared) > 0 {
+                    return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                        number: statementNumber, code: SQLITE_RANGE,
+                        message: "This console does not supply values for parameter placeholders."
+                    ))
+                }
+
+                let sql = String(decoding: source[startOffset..<offset], as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let columnCount = Int(sqlite3_column_count(prepared))
+                let columns = (0..<columnCount).map {
+                    String(cString: sqlite3_column_name(prepared, Int32($0)))
+                }
+                let isReadOnly = sqlite3_stmt_readonly(prepared) != 0
+                let changesBefore = sqlite3_total_changes64(connection)
+                var rows: [[SQLiteValue]] = []
+                var rowCount: Int64 = 0
+                while true {
+                    if cancellation.isCancelled {
+                        return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                            number: statementNumber, code: SQLITE_INTERRUPT, message: "Query cancelled."
+                        ))
+                    }
+                    let stepStatus = sqlite3_step(prepared)
+                    if stepStatus == SQLITE_DONE { break }
+                    guard stepStatus == SQLITE_ROW else {
+                        return SQLScriptResult(blocks: blocks, failure: Self.scriptFailure(
+                            connection, source: source, startOffset: startOffset,
+                            number: statementNumber, status: stepStatus
+                        ))
+                    }
+                    rowCount += 1
+                    if rows.count < 200 {
+                        do {
+                            rows.append(try (0..<columnCount).map {
+                                try Self.readValue(from: prepared, at: Int32($0), connection: connection, sql: sql)
+                            })
+                        } catch let error as SQLiteError {
+                            return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                                number: statementNumber, code: error.code, message: error.message
+                            ))
+                        } catch {
+                            return SQLScriptResult(blocks: blocks, failure: Self.simpleFailure(
+                                number: statementNumber, code: SQLITE_ERROR, message: error.localizedDescription
+                            ))
+                        }
+                    }
+                }
+                blocks.append(SQLStatementBlock(
+                    number: statementNumber, sql: sql, columns: columns, rows: rows,
+                    rowCount: rowCount,
+                    affectedRows: isReadOnly ? 0 : sqlite3_total_changes64(connection) - changesBefore,
+                    elapsedSeconds: ProcessInfo.processInfo.systemUptime - start
+                ))
+            }
+            if blocks.isEmpty {
+                return SQLScriptResult(blocks: [], failure: Self.simpleFailure(
+                    number: 1, code: SQLITE_MISUSE, message: "Enter a SQL statement."
+                ))
+            }
+            return SQLScriptResult(blocks: blocks, failure: nil)
+        }
+    }
+
     static func compileOptionUsed(_ option: String) -> Bool {
         sqlite3_compileoption_used(option) != 0
+    }
+
+    private static func simpleFailure(number: Int, code: Int32, message: String) -> SQLStatementFailure {
+        SQLStatementFailure(number: number, code: code, extendedCode: code,
+                            message: message, line: nil, column: nil)
+    }
+
+    private static func scriptFailure(_ connection: OpaquePointer, source: [UInt8], startOffset: Int,
+                                      number: Int, status: Int32) -> SQLStatementFailure {
+        let error = makeError(connection, sql: "", fallbackCode: status)
+        let errorOffset = sqlite3_error_offset(connection)
+        let location: (line: Int, column: Int)?
+        if errorOffset >= 0 {
+            let byteOffset = min(startOffset + Int(errorOffset), source.count)
+            let prefix = String(decoding: source.prefix(byteOffset), as: UTF8.self)
+            let lines = prefix.split(separator: "\n", omittingEmptySubsequences: false)
+            location = (lines.count, (lines.last?.count ?? 0) + 1)
+        } else {
+            location = nil
+        }
+        return SQLStatementFailure(
+            number: number, code: error.code, extendedCode: error.extendedCode,
+            message: error.code == SQLITE_INTERRUPT ? "Query cancelled." : error.message,
+            line: location?.line, column: location?.column
+        )
     }
 
     private static func bind(_ value: SQLiteValue, to statement: OpaquePointer, at index: Int32) -> Int32 {

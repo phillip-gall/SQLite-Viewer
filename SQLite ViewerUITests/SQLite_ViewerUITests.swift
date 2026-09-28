@@ -67,4 +67,55 @@ final class SQLite_ViewerUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+
+    @MainActor
+    func testSQLConsoleRefreshesSchemaAndKeepsDraft() throws {
+        let app = XCUIApplication()
+        let name = "SQL Test \(UUID().uuidString)"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let database = app.staticTexts[name]
+        XCTAssertTrue(database.waitForExistence(timeout: 10))
+        database.tap()
+        app.tabBars.buttons["SQL"].tap()
+        let editor = app.textViews["sql-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        let script = "CREATE TABLE console_added (value TEXT); INSERT INTO console_added VALUES ('persisted'); SELECT value FROM console_added;"
+        editor.tap()
+        editor.typeText(script)
+        app.buttons["run-sql"].tap()
+        XCTAssertTrue(app.staticTexts["Finished"].waitForExistence(timeout: 10))
+        for _ in 0..<5 {
+            if app.staticTexts["sql-statement-3"].exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.staticTexts["sql-statement-3"].exists)
+        XCTAssertTrue(app.staticTexts["Row 1, value, text persisted"].exists)
+        app.tabBars.buttons["Schema"].tap()
+        XCTAssertTrue(app.buttons["schema-table:console_added"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["SQL"].tap()
+        XCTAssertTrue((editor.value as? String)?.contains(script) == true)
+    }
+
+    @MainActor
+    func testSQLConsoleShowsErrorAfterSuccessfulStatement() throws {
+        let app = XCUIApplication()
+        let name = "SQL Error Test \(UUID().uuidString)"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let database = app.staticTexts[name]
+        XCTAssertTrue(database.waitForExistence(timeout: 10))
+        database.tap()
+        app.tabBars.buttons["SQL"].tap()
+        let editor = app.textViews["sql-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        editor.typeText("SELECT 1; SELEKT 2;")
+        app.buttons["run-sql"].tap()
+        XCTAssertTrue(app.staticTexts["sql-error-summary"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["sql-statement-1"].exists)
+        XCTAssertTrue(app.staticTexts["Stopped"].exists)
+    }
 }
