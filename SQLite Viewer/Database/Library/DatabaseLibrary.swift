@@ -10,6 +10,11 @@ nonisolated struct LibraryDatabase: Identifiable, Sendable, Equatable {
     let problem: String?
 }
 
+nonisolated struct DatabaseExport: Identifiable, Sendable {
+    let id: UUID
+    let fileURL: URL
+}
+
 nonisolated enum LibraryError: LocalizedError, Sendable {
     case invalidSource(String)
     case sourceOpen(String)
@@ -45,9 +50,11 @@ actor DatabaseLibrary {
 
     private let root: URL
     private let stagingRoot: URL
+    private let exportRoot: URL
     private let files = FileManager.default
     private var activeID: UUID?
     private var activeSession: DatabaseSession?
+    private var connectionRevision = 0
 
     init(rootURL: URL? = nil) throws {
         let support = try FileManager.default.url(
@@ -56,10 +63,14 @@ actor DatabaseLibrary {
         )
         root = rootURL ?? support.appendingPathComponent("Databases", isDirectory: true)
         stagingRoot = root.appendingPathComponent(".staging", isDirectory: true)
+        exportRoot = root.appendingPathComponent(".exports", isDirectory: true)
         do {
             try Self.protectDirectory(root)
             try Self.protectDirectory(stagingRoot)
+            try Self.protectDirectory(exportRoot)
             try FileManager.default.contentsOfDirectory(at: stagingRoot, includingPropertiesForKeys: nil)
+                .forEach { try FileManager.default.removeItem(at: $0) }
+            try FileManager.default.contentsOfDirectory(at: exportRoot, includingPropertiesForKeys: nil)
                 .forEach { try FileManager.default.removeItem(at: $0) }
         } catch {
             throw LibraryError.storage(error.localizedDescription)
@@ -140,39 +151,51 @@ actor DatabaseLibrary {
     }
 
     func open(_ id: UUID) async throws -> LibraryDatabase {
+        try Task.checkCancellation()
+        connectionRevision += 1
+        let revision = connectionRevision
         guard let database = try databases().first(where: { $0.id == id }) else { throw LibraryError.missingEntry }
         if let problem = database.problem { throw LibraryError.corrupt(problem) }
         if activeID == id { return database }
-        try await closeActive()
+        try await closeCurrentSession()
+        try Task.checkCancellation()
+        guard revision == connectionRevision else { throw CancellationError() }
         let url = root.appendingPathComponent(id.uuidString, isDirectory: true)
             .appendingPathComponent("database.sqlite")
+        var openingSession: DatabaseSession?
         do {
             try Self.checkSQLiteHeader(at: url)
             let session = try DatabaseSession(url: url)
-            let check = try await session.execute("PRAGMA quick_check", rowLimit: 1)
-            guard check.rows == [[.text("ok")]], check.rowCount == 1 else {
-                try? await session.close()
-                throw LibraryError.corrupt("PRAGMA quick_check did not return ok.")
-            }
+            openingSession = session
+            // Import already checks every page. Reopening only needs to load the schema.
+            _ = try await session.execute("SELECT count(*) FROM sqlite_schema", rowLimit: 1)
+            try Task.checkCancellation()
+            guard revision == connectionRevision else { throw CancellationError() }
             try Self.protectContents(of: url.deletingLastPathComponent())
             activeSession = session
             activeID = id
             return database
-        } catch let error as LibraryError {
-            throw error
-        } catch let error as SQLiteError {
-            throw LibraryError.corrupt(error.message)
         } catch {
+            try? await openingSession?.close()
+            if error is CancellationError { throw error }
+            if let error = error as? LibraryError { throw error }
+            if let error = error as? SQLiteError { throw LibraryError.corrupt(error.message) }
             throw LibraryError.storage(error.localizedDescription)
         }
     }
 
     func closeActive() async throws {
+        connectionRevision += 1
+        try await closeCurrentSession()
+    }
+
+    private func closeCurrentSession() async throws {
         let closedID = activeID
-        activeSession?.cancelActiveSQL()
-        try await activeSession?.close()
+        let session = activeSession
         activeSession = nil
         activeID = nil
+        session?.cancelActiveSQL()
+        try await session?.close()
         if let closedID {
             try Self.protectContents(of: root.appendingPathComponent(closedID.uuidString, isDirectory: true))
         }
@@ -181,6 +204,43 @@ actor DatabaseLibrary {
     func session(for id: UUID) throws -> DatabaseSession {
         guard activeID == id, let activeSession else { throw LibraryError.missingEntry }
         return activeSession
+    }
+
+    /// Creates a separate file with committed data, including WAL transactions.
+    func exportDatabase(_ id: UUID) throws -> DatabaseExport {
+        guard let database = try databases().first(where: { $0.id == id }) else {
+            throw LibraryError.missingEntry
+        }
+        if let problem = database.problem { throw LibraryError.corrupt(problem) }
+        let exportID = UUID()
+        let directory = exportRoot.appendingPathComponent(exportID.uuidString, isDirectory: true)
+        let name = database.displayName.components(separatedBy: CharacterSet(charactersIn: "/\\:\0").union(.controlCharacters))
+            .filter { !$0.isEmpty }.joined(separator: "-")
+        var filename = ""
+        for character in name {
+            guard filename.utf8.count + String(character).utf8.count <= 240 else { break }
+            filename.append(character)
+        }
+        if filename.isEmpty || filename == "." || filename == ".." { filename = "Database" }
+        let destination = directory.appendingPathComponent(filename + ".sqlite")
+        let source = root.appendingPathComponent(id.uuidString).appendingPathComponent("database.sqlite")
+        do {
+            try Task.checkCancellation()
+            try Self.protectDirectory(directory)
+            try Self.backup(from: source, to: destination, validate: false)
+            try Task.checkCancellation()
+            try Self.protectContents(of: directory)
+            return DatabaseExport(id: exportID, fileURL: destination)
+        } catch {
+            try? files.removeItem(at: directory)
+            if let error = error as? SnapshotTransferError { throw LibraryError.backup(error.message) }
+            throw error
+        }
+    }
+
+    func discardExport(_ export: DatabaseExport) throws {
+        let directory = exportRoot.appendingPathComponent(export.id.uuidString, isDirectory: true)
+        if files.fileExists(atPath: directory.path) { try files.removeItem(at: directory) }
     }
 
     @discardableResult
@@ -293,7 +353,7 @@ actor DatabaseLibrary {
         }
     }
 
-    private static func backup(from source: URL, to destination: URL) throws {
+    private static func backup(from source: URL, to destination: URL, validate: Bool = true) throws {
         var input: OpaquePointer?
         let inputStatus = sqlite3_open_v2(source.path, &input, SQLITE_OPEN_READONLY, nil)
         guard inputStatus == SQLITE_OK, let input else {
@@ -324,6 +384,13 @@ actor DatabaseLibrary {
             throw SnapshotTransferError(code: step == SQLITE_DONE ? finish : step,
                                         message: String(cString: sqlite3_errmsg(output)))
         }
+
+        // The shared snapshot must work without any WAL or journal sidecars.
+        let journalStatus = sqlite3_exec(output, "PRAGMA journal_mode=DELETE", nil, nil, nil)
+        guard journalStatus == SQLITE_OK else {
+            throw LibraryError.backup(String(cString: sqlite3_errmsg(output)))
+        }
+        guard validate else { return }
 
         var statement: OpaquePointer?
         let prepare = sqlite3_prepare_v2(output, "PRAGMA quick_check", -1, &statement, nil)

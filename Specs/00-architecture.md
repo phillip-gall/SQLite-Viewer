@@ -2,7 +2,7 @@
 
 ## Product contract
 
-SQLite Viewer is an iPhone and iPad tool for inspecting and editing an imported SQLite database. Import creates an independent copy inside the app container, whether it starts from the in-app picker or a file shared from another app. Opening a database creates a connection to that copy. The user can rename a library entry, inspect schema objects and row counts, browse and filter table rows, inspect storage use by category and table, and run raw SQL, including statements that change data or schema. The app never executes SQL against the original URL.
+SQLite Viewer is an iPhone and iPad tool for inspecting and editing an imported SQLite database. Import creates an independent copy inside the app container, whether it starts from the in-app picker or a file shared from another app. Opening a database creates a connection to that copy. The user can rename a library entry, export a database snapshot through the system share sheet, inspect schema objects and row counts, browse and filter table rows, inspect storage use by category and table, and run raw SQL, including statements that change data or schema. The app never executes SQL against the original URL.
 
 The repository is an Xcode SwiftUI app with library, schema, rows, SQL, and storage workspaces. It targets iOS 26.5, uses Swift 5 language mode, and has unit and UI test targets. `Specs/` is included in the app target by Xcode's synchronized group. Implementation plans must keep Markdown files out of the app bundle if Xcode starts treating them as resources.
 
@@ -36,6 +36,8 @@ flowchart TD
 7. Show exact table row counts in Schema and Rows. Load counts separately from row pages so browsing still opens promptly, and invalidate counts after successful SQL execution. The Rows count is the total table count; when filters are active, show the matching count separately.
 8. Row filters combine with AND. Quote selected column names and bind typed values; never splice user input into generated SQL. Use the same predicates for page queries and matching counts. Preserve filters per table while navigating, and reset to page one when they change.
 9. Storage drilldowns preserve the logical page accounting above. Table data and index categories can be divided by table. Other B-trees can be divided by their reported trees. Free pages and overhead have no table owner and must be labeled unassigned rather than attributed to a table.
+10. Opening pushes a destination immediately and shows progress until the connection is ready. Run file and SQLite work on the library and session actors. Full integrity validation happens during import; reopening checks the header and reads the schema without scanning every data page. A failed open offers Retry, and returning to the library cancels pending opening work and closes any active session.
+11. Export is available from library row actions and the database toolbar. Use SQLite's online backup API to create an independent snapshot of committed data, including WAL transactions. Share one `.sqlite` file in DELETE journal mode, with a safe filename based on the display name. Keep protected export files in `.exports` until the share sheet dismisses, then delete them. Remove incomplete exports after failure and abandoned exports on library initialization.
 
 ## Execution order
 

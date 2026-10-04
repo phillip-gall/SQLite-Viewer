@@ -6,6 +6,52 @@ final class SQLite_ViewerUITests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningNavigatesImmediatelyAndBackCancelsLoading() throws {
+        let app = XCUIApplication()
+        let name = "Opening Test \(UUID().uuidString.prefix(6))"
+        app.launchArguments = ["-ui-test-import", name, "-ui-test-open-delay"]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(app.activityIndicators["database-open-progress"].waitForExistence(timeout: 2))
+        app.buttons["Databases"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: row)
+        waitForExpectations(timeout: 5)
+        row.tap()
+        XCTAssertTrue(app.buttons["schema-table:sample"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.otherElements["database-open-error"].exists)
+    }
+
+    @MainActor
+    func testExportFromWorkspaceAndLibraryPresentsShareSheet() throws {
+        let app = XCUIApplication()
+        let name = "Export Test \(UUID().uuidString.prefix(6))"
+        app.launchArguments = ["-ui-test-import", name]
+        app.launch()
+        app.buttons["import-test-database"].tap()
+        let row = app.buttons["Open \(name)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let export = app.buttons["export-database"]
+        XCTAssertTrue(export.waitForExistence(timeout: 10))
+        export.tap()
+        let shareSheet = app.otherElements["ActivityListView"]
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 10))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        app.buttons["header.closeButton"].tap()
+        app.buttons["Databases"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.press(forDuration: 1)
+        app.buttons["Export database"].tap()
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testImportAndReopenAfterRelaunch() throws {
         let app = XCUIApplication()
         let name = "UI Test \(UUID().uuidString)"

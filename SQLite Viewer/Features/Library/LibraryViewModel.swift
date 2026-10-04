@@ -7,12 +7,28 @@ final class LibraryViewModel: ObservableObject {
     @Published private(set) var opened: LibraryDatabase?
     @Published private(set) var isBusy = false
     @Published private(set) var isImporting = false
+    @Published private(set) var isExporting = false
+    @Published var exportedDatabase: DatabaseExport?
+    @Published private(set) var openingErrorMessage: String?
     @Published var errorMessage: String?
     @Published var renameErrorMessage: String?
 
     private(set) var library: DatabaseLibrary?
     private var sharedImportGate = SharedFileImportGate()
     private var activeImportCount = 0
+    private var openingRevision = 0
+    private var preparedExport: DatabaseExport?
+    private var busyCount = 0
+
+    private func beginBusy() {
+        busyCount += 1
+        isBusy = true
+    }
+
+    private func endBusy() {
+        busyCount -= 1
+        isBusy = busyCount > 0
+    }
 
     init(library: DatabaseLibrary? = nil) {
         self.library = library
@@ -32,11 +48,11 @@ final class LibraryViewModel: ObservableObject {
     func importFile(_ url: URL) async -> Bool {
         activeImportCount += 1
         isImporting = true
-        isBusy = true
+        beginBusy()
         defer {
             activeImportCount -= 1
             isImporting = activeImportCount > 0
-            isBusy = activeImportCount > 0
+            endBusy()
         }
         if library == nil { await load() }
         guard let library else { return false }
@@ -63,32 +79,77 @@ final class LibraryViewModel: ObservableObject {
 
     func open(_ id: UUID) async -> Bool {
         guard let library else { return false }
-        isBusy = true
-        defer { isBusy = false }
+        openingRevision += 1
+        let revision = openingRevision
+        openingErrorMessage = nil
+        beginBusy()
+        defer { endBusy() }
         do {
-            opened = try await library.open(id)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-ui-test-open-delay") {
+                try await Task.sleep(for: .seconds(3))
+            }
+            #endif
+            let database = try await library.open(id)
+            guard revision == openingRevision, !Task.isCancelled else { return false }
+            opened = database
             return true
+        } catch is CancellationError {
+            return false
         } catch {
-            errorMessage = error.localizedDescription
+            guard revision == openingRevision, !Task.isCancelled else { return false }
+            openingErrorMessage = error.localizedDescription
             return false
         }
     }
 
     func close() async {
+        openingRevision += 1
+        opened = nil
+        openingErrorMessage = nil
+        beginBusy()
+        defer { endBusy() }
         do {
             try await library?.closeActive()
-            opened = nil
             databases = try await library?.databases() ?? []
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    func export(_ id: UUID) async {
+        guard let library, !isExporting, preparedExport == nil else { return }
+        isExporting = true
+        beginBusy()
+        defer {
+            isExporting = false
+            endBusy()
+        }
+        do {
+            let snapshot = try await library.exportDatabase(id)
+            preparedExport = snapshot
+            exportedDatabase = snapshot
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func discardExport() {
+        guard let snapshot = preparedExport else { return }
+        preparedExport = nil
+        exportedDatabase = nil
+        Task {
+            try? await library?.discardExport(snapshot)
+        }
+    }
+
     func rename(_ id: UUID, to name: String) async -> Bool {
         guard let library else { return false }
         renameErrorMessage = nil
-        isBusy = true
-        defer { isBusy = false }
+        beginBusy()
+        defer { endBusy() }
         do {
             let renamed = try await library.rename(id, to: name)
             if let index = databases.firstIndex(where: { $0.id == id }) {

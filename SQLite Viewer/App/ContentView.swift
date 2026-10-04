@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct ContentView: View {
     @StateObject private var model = LibraryViewModel()
@@ -22,47 +23,7 @@ struct ContentView: View {
                                                description: Text("Import a SQLite file to create an editable copy."))
                     }
                     ForEach(model.databases) { database in
-                        Button {
-                            Task {
-                                if await model.open(database.id) { path.append(database.id) }
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(database.displayName).font(.headline)
-                                Text(database.importedAt, style: .date)
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if let problem = database.problem {
-                                    Text(problem).font(.caption).foregroundStyle(.red)
-                                }
-                                Text("Open").font(.caption).foregroundStyle(.tint)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .frame(maxWidth: .infinity)
-                        .disabled(model.isBusy)
-                        .accessibilityLabel("Open \(database.displayName)")
-                        .accessibilityIdentifier("open-\(database.id.uuidString)")
-                        .accessibilityAction(named: "Rename") { beginRename(database) }
-                        .accessibilityAction(named: "Delete") { pendingDelete = database }
-                        .contextMenu {
-                            Button("Rename", systemImage: "pencil") { beginRename(database) }
-                            Button(role: .destructive) { pendingDelete = database } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                        .swipeActions(edge: .trailing) {
-                            Button("Rename", systemImage: "pencil") { beginRename(database) }
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                pendingDelete = database
-                            }
-                        }
-                        .listRowInsets(EdgeInsets())
+                        databaseRow(database)
                     }
                 } footer: {
                     Text("Import .sqlite, .sqlite3, or .db files. Import makes an independent snapshot. The source and its WAL sidecars must be accessible for uncheckpointed transactions to appear.")
@@ -85,8 +46,8 @@ struct ContentView: View {
                 .accessibilityIdentifier("import-button")
             }
             .navigationDestination(for: UUID.self) { id in
-                if let database = model.opened, database.id == id, let library = model.library {
-                    DatabaseWorkspace(database: database, library: library)
+                if let database = model.databases.first(where: { $0.id == id }), let library = model.library {
+                    DatabaseDestination(database: database, library: library, model: model)
                 }
             }
             .fileImporter(isPresented: $isImporterPresented,
@@ -145,6 +106,18 @@ struct ContentView: View {
                 Text(model.errorMessage ?? "")
             }
         }
+        .sheet(item: $model.exportedDatabase, onDismiss: model.discardExport) { snapshot in
+            DatabaseShareSheet(fileURL: snapshot.fileURL)
+        }
+        .overlay(alignment: .bottom) {
+            if model.isExporting {
+                ProgressView("Preparing database…")
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding()
+                    .accessibilityIdentifier("export-progress")
+            }
+        }
         .task { await model.load() }
         .onOpenURL { url in
             Task {
@@ -156,15 +129,113 @@ struct ContentView: View {
         }
     }
 
+    private func databaseRow(_ database: LibraryDatabase) -> some View {
+        Button {
+            path.append(database.id)
+        } label: {
+            databaseLabel(database)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .disabled(model.isBusy)
+        .accessibilityLabel("Open \(database.displayName)")
+        .accessibilityIdentifier("open-\(database.id.uuidString)")
+        .accessibilityAction(named: "Rename") { beginRename(database) }
+        .accessibilityAction(named: "Export") { export(database) }
+        .accessibilityAction(named: "Delete") { pendingDelete = database }
+        .contextMenu {
+            Button("Export database", systemImage: "square.and.arrow.up") { export(database) }
+                .disabled(model.isBusy)
+            Button("Rename", systemImage: "pencil") { beginRename(database) }
+            Button(role: .destructive) { pendingDelete = database } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .swipeActions(edge: .trailing) {
+            Button("Export", systemImage: "square.and.arrow.up") { export(database) }
+                .disabled(model.isBusy)
+            Button("Rename", systemImage: "pencil") { beginRename(database) }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                pendingDelete = database
+            }
+        }
+        .listRowInsets(EdgeInsets())
+    }
+
+    private func databaseLabel(_ database: LibraryDatabase) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(database.displayName).font(.headline)
+            Text(database.importedAt, style: .date)
+                .font(.caption).foregroundStyle(.secondary)
+            Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
+                .font(.caption).foregroundStyle(.secondary)
+            if let problem = database.problem {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
+            Text("Open").font(.caption).foregroundStyle(.tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+
     private func beginRename(_ database: LibraryDatabase) {
         model.renameErrorMessage = nil
         renameDraft = database.displayName
         pendingRename = database
     }
+
+    private func export(_ database: LibraryDatabase) {
+        Task { await model.export(database.id) }
+    }
+}
+
+private struct DatabaseDestination: View {
+    let database: LibraryDatabase
+    let library: DatabaseLibrary
+    @ObservedObject var model: LibraryViewModel
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            if let opened = model.opened, opened.id == database.id {
+                DatabaseWorkspace(database: opened, library: library,
+                                  isExporting: model.isExporting,
+                                  onExport: { Task { await model.export(database.id) } })
+            } else if let message = model.openingErrorMessage {
+                ContentUnavailableView {
+                    Label("Could not open database", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("Retry") { attempt += 1 }
+                }
+                .accessibilityIdentifier("database-open-error")
+            } else {
+                ProgressView("Opening database…")
+                    .accessibilityIdentifier("database-open-progress")
+            }
+        }
+        .navigationTitle(database.displayName)
+        .task(id: attempt) { _ = await model.open(database.id) }
+    }
+}
+
+private struct DatabaseShareSheet: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private struct DatabaseWorkspace: View {
     let database: LibraryDatabase
+    let isExporting: Bool
+    let onExport: () -> Void
     @StateObject private var schemaModel: SchemaWorkspaceModel
     @StateObject private var rowsModel: RowsWorkspaceModel
     @StateObject private var storageModel: StorageWorkspaceModel
@@ -172,8 +243,10 @@ private struct DatabaseWorkspace: View {
     @StateObject private var countStore: TableCountStore
     @State private var destination = "schema"
 
-    init(database: LibraryDatabase, library: DatabaseLibrary) {
+    init(database: LibraryDatabase, library: DatabaseLibrary, isExporting: Bool, onExport: @escaping () -> Void) {
         self.database = database
+        self.isExporting = isExporting
+        self.onExport = onExport
         _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
         _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
         _storageModel = StateObject(wrappedValue: StorageWorkspaceModel(databaseID: database.id, library: library))
@@ -198,6 +271,11 @@ private struct DatabaseWorkspace: View {
                 .tag("sql")
         }
         .navigationTitle(database.displayName)
+        .toolbar {
+            Button("Export database", systemImage: "square.and.arrow.up", action: onExport)
+                .disabled(isExporting)
+                .accessibilityIdentifier("export-database")
+        }
         .onChange(of: schemaModel.refreshVersion) { _, _ in
             rowsModel.invalidateAndReload(availableObjects: schemaModel.catalog)
         }
