@@ -149,6 +149,8 @@ final class SQLite_ViewerUITests: XCTestCase {
         app.tabBars.buttons["Rows"].tap()
         app.buttons["rows-object-picker"].tap()
         app.buttons["earnings"].tap()
+        XCTAssertTrue(app.buttons["show-filters"].waitForExistence(timeout: 10))
+        app.buttons["show-filters"].tap()
         XCTAssertTrue(app.buttons["add-filter"].waitForExistence(timeout: 10))
 
         app.buttons["add-filter"].tap()
@@ -168,6 +170,8 @@ final class SQLite_ViewerUITests: XCTestCase {
         secondValue.tap()
         secondValue.typeText("1000")
         app.buttons["apply-filter"].tap()
+        XCTAssertTrue(app.buttons["clear-filters"].waitForExistence(timeout: 10))
+        app.buttons["Done"].tap()
         let matching = app.staticTexts["rows-matching-count"]
         XCTAssertTrue(matching.waitForExistence(timeout: 10))
         let expected = NSPredicate(format: "label CONTAINS %@", "Matching 1 of 3 rows")

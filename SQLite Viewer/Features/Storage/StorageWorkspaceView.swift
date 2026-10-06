@@ -21,7 +21,21 @@ struct StorageWorkspaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("Storage")
+        .background(WorkspaceStyle.canvas)
+        .toolbar {
+            Button("Refresh storage", systemImage: "arrow.clockwise") { model.refresh() }
+                .labelStyle(.iconOnly)
+                .accessibilityIdentifier("storage-refresh")
+            Menu {
+                Picker("Sort by", selection: $model.sort) {
+                    ForEach(StorageWorkspaceModel.Sort.allCases, id: \.self) { sort in
+                        Text(sort.rawValue).tag(sort)
+                    }
+                }
+            } label: { Label("Sort storage", systemImage: "arrow.up.arrow.down") }
+            .labelStyle(.iconOnly)
+            .accessibilityIdentifier("storage-sort")
+        }
         .task {
             if model.report == nil && !model.isLoading && model.errorMessage == nil {
                 model.refresh()
@@ -32,15 +46,10 @@ struct StorageWorkspaceView: View {
     private func reportView(_ report: StorageReport) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    Text("Logical database")
-                        .font(.title2.bold())
-                    Spacer()
-                    Button("Refresh", systemImage: "arrow.clockwise") { model.refresh() }
-                        .accessibilityIdentifier("storage-refresh")
-                }
+                Text("Logical database")
+                    .font(.subheadline).foregroundStyle(.secondary)
                 Text(bytes(report.logicalBytes))
-                    .font(.title.monospacedDigit().bold())
+                    .font(.system(size: 40, weight: .semibold, design: .rounded).monospacedDigit())
                     .accessibilityIdentifier("storage-total")
                 Text("\(report.pageCount) pages × \(bytes(report.pageSize)) per page. WAL is shown separately.")
                     .font(.subheadline)
@@ -59,20 +68,7 @@ struct StorageWorkspaceView: View {
                     }
                 }
 
-                HStack {
-                    Text("Tables and views").font(.title3.bold())
-                    Spacer()
-                    Menu {
-                        Picker("Sort by", selection: $model.sort) {
-                            ForEach(StorageWorkspaceModel.Sort.allCases, id: \.self) { sort in
-                                Text(sort.rawValue).tag(sort)
-                            }
-                        }
-                    } label: {
-                        Label(model.sort.rawValue, systemImage: "arrow.up.arrow.down")
-                    }
-                    .accessibilityIdentifier("storage-sort")
-                }
+                Text("Tables and views").font(.headline)
 
                 if let selected = model.selectedObject {
                     selectedDetail(selected, logicalBytes: report.logicalBytes)
@@ -136,7 +132,9 @@ struct StorageWorkspaceView: View {
                     Text("\(selected.label): \(bytes(breakdown.bytes)) (\(percent(breakdown.bytes, of: report.logicalBytes)) of database)")
                         .font(.headline)
                     Spacer()
-                    Button("Back to overview") { model.showOverview() }
+                    Button("Back to overview", systemImage: "arrow.uturn.backward") { model.showOverview() }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.glass)
                         .accessibilityIdentifier("storage-overview")
                 }
                 contributorChart(breakdown)
@@ -255,11 +253,11 @@ struct StorageWorkspaceView: View {
 
     private func color(for category: StorageCategory) -> Color {
         switch category {
-        case .tableData: .blue
-        case .indexes: .green
-        case .other: .purple
-        case .free: .orange
-        case .overhead: .gray
+        case .tableData: .accentColor
+        case .indexes: .accentColor.opacity(0.65)
+        case .other: .accentColor.opacity(0.35)
+        case .free: .secondary.opacity(0.3)
+        case .overhead: .secondary.opacity(0.6)
         }
     }
 
@@ -295,6 +293,7 @@ struct StorageWorkspaceView: View {
                 Spacer()
                 Button("Close", systemImage: "xmark") { model.select(object.name) }
                     .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
             }
             if object.kind == .view {
                 Text("Views have no B-tree storage.")
@@ -320,7 +319,7 @@ struct StorageWorkspaceView: View {
             }
         }
         .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityIdentifier("storage-detail")
     }
 

@@ -7,9 +7,13 @@ struct SchemaWorkspaceView: View {
     let onRefresh: () -> Void
     let onBrowseRows: (SchemaObject) -> Void
 
+    var detailOnly = false
+
     var body: some View {
         GeometryReader { geometry in
-            if geometry.size.width >= 700 {
+            if detailOnly {
+                detailPane(wide: true)
+            } else if geometry.size.width >= 700 {
                 HStack(spacing: 0) {
                     catalogList(wide: true)
                         .frame(width: 320)
@@ -22,15 +26,12 @@ struct SchemaWorkspaceView: View {
             }
         }
         .accessibilityIdentifier("database-workspace")
-        .task { onRefresh() }
+
     }
 
     private func catalogList(wide: Bool) -> some View {
         List {
-                Section {
-                    Button("Refresh schema", systemImage: "arrow.clockwise") { onRefresh() }
-                        .accessibilityIdentifier("refresh-schema")
-                }
+
                 if let error = model.errorMessage {
                     Section {
                         Text(error).foregroundStyle(.red)
@@ -66,7 +67,15 @@ struct SchemaWorkspaceView: View {
                     }
                 }
         }
-        .navigationTitle(database.displayName)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .toolbar {
+            if !detailOnly {
+                Button("Refresh schema", systemImage: "arrow.clockwise", action: onRefresh)
+                    .labelStyle(.iconOnly)
+                    .accessibilityIdentifier("refresh-schema")
+            }
+        }
         .overlay {
             if model.isLoading && model.catalog.isEmpty { ProgressView("Loading schema") }
         }
@@ -99,7 +108,7 @@ struct SchemaWorkspaceView: View {
                     ContentUnavailableView("Select a schema object", systemImage: "square.stack.3d.up")
                 }
         }
-        .navigationTitle(model.selected?.name ?? "Schema")
+        .navigationTitle(detailOnly ? database.displayName : model.selected?.name ?? "Schema")
     }
 
     @ViewBuilder
@@ -121,7 +130,7 @@ struct SchemaWorkspaceView: View {
                     if object.isInternal { Text("SQLite internal object") }
                     if model.shadowNames.contains(object.name) { Text("Shadow table") }
                 }
-                if object.kind == .table {
+                if object.kind == .table || object.kind == .view {
                     Section {
                         BrowseRowsButton(object: object, dismissDetail: !wide,
                                          action: onBrowseRows)
@@ -187,6 +196,8 @@ struct SchemaWorkspaceView: View {
                 }
                 Section("Stored SQL") { sqlText(object.sql) }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -274,7 +285,7 @@ private struct BrowseRowsButton: View {
     }
 }
 
-private extension SchemaObject.Kind {
+extension SchemaObject.Kind {
     var heading: String {
         switch self {
         case .table: "Tables"

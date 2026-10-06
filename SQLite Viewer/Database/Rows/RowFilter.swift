@@ -36,6 +36,19 @@ nonisolated struct RowFilter: Identifiable, Equatable, Sendable {
         var needsValue: Bool { self != .isNull && self != .isNotNull }
     }
 
+    var displayDescription: String {
+        guard let value, operation.needsValue else { return "\(column) \(operation.label)" }
+        let display: String
+        switch value {
+        case .text(let text): display = "\"\(text)\""
+        case .integer(let number): display = String(number)
+        case .real(let number): display = String(number)
+        case .null: display = "NULL"
+        case .blob(let data): display = "\(data.count) bytes"
+        }
+        return "\(column) \(operation.label) \(display)"
+    }
+
     let id: UUID
     let column: String
     let operation: Operator

@@ -79,6 +79,15 @@ final class RowsWorkspaceModel: ObservableObject {
         load()
     }
 
+    func saveFilter(_ filter: RowFilter) {
+        var updated = filters
+        if let index = updated.firstIndex(where: { $0.id == filter.id }) { updated[index] = filter }
+        else { updated.append(filter) }
+        applyFilters(updated)
+    }
+
+    func removeFilter(_ id: UUID) { applyFilters(filters.filter { $0.id != id }) }
+
     func reload() { if selected != nil { load() } }
 
     func invalidateVisiblePage() {

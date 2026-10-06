@@ -26,9 +26,12 @@ struct ContentView: View {
                         databaseRow(database)
                     }
                 } footer: {
-                    Text("Import .sqlite, .sqlite3, or .db files. Import makes an independent snapshot. The source and its WAL sidecars must be accessible for uncheckpointed transactions to appear.")
+                    Text("Import a .sqlite, .sqlite3, or .db file to work on a separate copy. Include accessible WAL sidecars for recent transactions.")
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(WorkspaceStyle.canvas)
             .navigationTitle("Databases")
             .toolbar {
                 #if DEBUG
@@ -42,6 +45,7 @@ struct ContentView: View {
                 Button("Import", systemImage: "square.and.arrow.down") {
                     isImporterPresented = true
                 }
+                .labelStyle(.iconOnly)
                 .disabled(model.isBusy)
                 .accessibilityIdentifier("import-button")
             }
@@ -163,20 +167,31 @@ struct ContentView: View {
     }
 
     private func databaseLabel(_ database: LibraryDatabase) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(database.displayName).font(.headline)
-            Text(database.importedAt, style: .date)
+        HStack(spacing: 16) {
+            Image(systemName: "externaldrive")
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 44, height: 44)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(database.displayName).font(.headline).foregroundStyle(.primary)
+                HStack(spacing: 8) {
+                    Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
+                    Text("·")
+                    Text(database.importedAt, style: .date)
+                }
                 .font(.caption).foregroundStyle(.secondary)
-            Text(ByteCountFormatter.string(fromByteCount: database.fileSize, countStyle: .file))
-                .font(.caption).foregroundStyle(.secondary)
-            if let problem = database.problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
+                if let problem = database.problem {
+                    Text(problem).font(.caption).foregroundStyle(.red)
+                }
             }
-            Text("Open").font(.caption).foregroundStyle(.tint)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
         .contentShape(Rectangle())
     }
 
@@ -232,73 +247,3 @@ private struct DatabaseShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-private struct DatabaseWorkspace: View {
-    let database: LibraryDatabase
-    let isExporting: Bool
-    let onExport: () -> Void
-    @StateObject private var schemaModel: SchemaWorkspaceModel
-    @StateObject private var rowsModel: RowsWorkspaceModel
-    @StateObject private var storageModel: StorageWorkspaceModel
-    @StateObject private var sqlModel: SQLConsoleModel
-    @StateObject private var countStore: TableCountStore
-    @State private var destination = "schema"
-
-    init(database: LibraryDatabase, library: DatabaseLibrary, isExporting: Bool, onExport: @escaping () -> Void) {
-        self.database = database
-        self.isExporting = isExporting
-        self.onExport = onExport
-        _schemaModel = StateObject(wrappedValue: SchemaWorkspaceModel(databaseID: database.id, library: library))
-        _rowsModel = StateObject(wrappedValue: RowsWorkspaceModel(databaseID: database.id, library: library))
-        _storageModel = StateObject(wrappedValue: StorageWorkspaceModel(databaseID: database.id, library: library))
-        _sqlModel = StateObject(wrappedValue: SQLConsoleModel(databaseID: database.id, library: library))
-        _countStore = StateObject(wrappedValue: TableCountStore(databaseID: database.id, library: library))
-    }
-
-    var body: some View {
-        TabView(selection: $destination) {
-            SchemaWorkspaceView(database: database, model: schemaModel, counts: countStore,
-                                onRefresh: refreshSchema, onBrowseRows: browseRows)
-                .tabItem { Label("Schema", systemImage: "square.stack.3d.up") }
-                .tag("schema")
-            RowsWorkspaceView(catalog: schemaModel.catalog, model: rowsModel, counts: countStore)
-                .tabItem { Label("Rows", systemImage: "tablecells") }
-                .tag("rows")
-            StorageWorkspaceView(model: storageModel)
-                .tabItem { Label("Storage", systemImage: "externaldrive") }
-                .tag("storage")
-            SQLConsoleView(database: database, model: sqlModel)
-                .tabItem { Label("SQL", systemImage: "chevron.left.forwardslash.chevron.right") }
-                .tag("sql")
-        }
-        .navigationTitle(database.displayName)
-        .toolbar {
-            Button("Export database", systemImage: "square.and.arrow.up", action: onExport)
-                .disabled(isExporting)
-                .accessibilityIdentifier("export-database")
-        }
-        .onChange(of: schemaModel.refreshVersion) { _, _ in
-            rowsModel.invalidateAndReload(availableObjects: schemaModel.catalog)
-        }
-        .onChange(of: sqlModel.completedVersion) { _, _ in
-            refreshAfterSQL()
-        }
-    }
-
-    private func refreshSchema() {
-        countStore.invalidate()
-        rowsModel.invalidateVisiblePage()
-        schemaModel.refreshSchema()
-    }
-
-    private func browseRows(_ object: SchemaObject) {
-        rowsModel.select(object)
-        destination = "rows"
-    }
-
-    private func refreshAfterSQL() {
-        countStore.invalidate()
-        rowsModel.invalidateVisiblePage()
-        schemaModel.refreshSchema()
-        storageModel.refresh()
-    }
-}
